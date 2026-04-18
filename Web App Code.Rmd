@@ -82,7 +82,7 @@ package_updater=function(){
       message("Installing ",pkg," (binary)")
       install.packages(pkg,lib=lib,repos=getOption("repos"),dependencies=TRUE,type="binary",quiet=TRUE)
     },error=function(e){
-      stop("Failed to install package: ",pkg,"\\n",conditionMessage(e))
+      stop("Failed to install package: ",pkg,"\n",conditionMessage(e))
     })
   }
   #Required packages
@@ -111,7 +111,7 @@ package_updater=function(){
   }
   #Diagnostics: package versions
   package_versions=sapply(required_packages,function(pkg) as.character(packageVersion(pkg)))
-  cat("\\nLoaded package versions:\\n")
+  cat("\nLoaded package versions:\n")
   print(package_versions)
   #RDCOMClient (OmegaHat source)
   if(!requireNamespace("RDCOMClient",quietly=TRUE)){
@@ -132,7 +132,7 @@ convert_to_date=function(x){
     x_trimmed=trimws(x)
     #Replace non-date placeholders with NA
     x_trimmed[x_trimmed %in% c("00/00/0000","","NA","N/A","NaN")]=NA
-    numeric_like=grepl("^\\\\d+$",x_trimmed)
+    numeric_like=grepl("^\\d+$",x_trimmed)
     if(all(numeric_like[!is.na(x_trimmed)])){
       x=as.numeric(x_trimmed)
     } else{
@@ -173,10 +173,10 @@ rename_files=function(files){
     fname_lower=tolower(fname)
     #Skip Already Fromatted
     already_formatted=
-      grepl("^\\\\d{4}\\\\.\\\\d{2}\\\\s+(payroll|census|pay date|fixed asset report)(\\\\sbonus)?\\\\.xls[x]?$",fname_lower)||
-      grepl("^\\\\d{4}\\\\.q[1-4]\\\\s+(payroll|census|pay date)(\\\\sbonus)?\\\\.xls[x]?$",fname_lower)||
-      grepl("^pay date\\\\s+\\\\d{4}\\\\.\\\\d{2}\\\\.\\\\d{2}(\\\\sbonus)?\\\\.xls[x]?$",fname_lower)||
-      grepl("^\\\\d{4}\\\\.\\\\d{2}\\\\.\\\\d{2}\\\\s-\\\\s\\\\d{4}\\\\.\\\\d{2}\\\\.\\\\d{2}\\\\s+(payroll|census|pay date)(\\\\sbonus)?\\\\.xls[x]?$",fname_lower)
+      grepl("^\\d{4}\\.\\d{2}\\s+(payroll|census|pay date|fixed asset report)(\\sbonus)?\\.xls[x]?$",fname_lower)||
+      grepl("^\\d{4}\\.q[1-4]\\s+(payroll|census|pay date)(\\sbonus)?\\.xls[x]?$",fname_lower)||
+      grepl("^pay date\\s+\\d{4}\\.\\d{2}\\.\\d{2}(\\sbonus)?\\.xls[x]?$",fname_lower)||
+      grepl("^\\d{4}\\.\\d{2}\\.\\d{2}\\s-\\s\\d{4}\\.\\d{2}\\.\\d{2}\\s+(payroll|census|pay date)(\\sbonus)?\\.xls[x]?$",fname_lower)
     if(already_formatted) next
     label=NA
     file_year=NA
@@ -191,7 +191,7 @@ rename_files=function(files){
     if(grepl("fixed asset report",fname_lower)){
       label="Fixed Asset Report"
       #MMYYYY anywhere
-      mm_match=str_match(fname_lower,"(\\\\d{2})(\\\\d{4})")
+      mm_match=str_match(fname_lower,"(\\d{2})(\\d{4})")
       if(!is.na(mm_match[1,1])){
         mm=mm_match[1,2]
         yy=mm_match[1,3]
@@ -202,7 +202,7 @@ rename_files=function(files){
       }
       #Month YYYY anywhere (incl parentheses)
       if(is.na(file_year)){
-        month_match=str_match(fname_lower,paste0("(",month_regex,")\\\\s*(\\\\d{4})"))
+        month_match=str_match(fname_lower,paste0("(",month_regex,")\\s*(\\d{4})"))
         if(!is.na(month_match[1,1])){
           month_name=month_match[1,2]
           year_num=month_match[1,3]
@@ -222,7 +222,7 @@ rename_files=function(files){
     }
     #Date Range
     if(label!="Fixed Asset Report"){
-      date_range_pattern="(\\\\d{1,2})[\\\\.\\\\-](\\\\d{1,2})[\\\\.\\\\-](\\\\d{2})[\\\\s\\\\-]+(\\\\d{1,2})[\\\\.\\\\-](\\\\d{1,2})[\\\\.\\\\-](\\\\d{2})"
+      date_range_pattern="(\\d{1,2})[\\.\\-](\\d{1,2})[\\.\\-](\\d{2})[\\s\\-]+(\\d{1,2})[\\.\\-](\\d{1,2})[\\.\\-](\\d{2})"
       range_match=str_match(fname_lower,date_range_pattern)
       if(!all(is.na(range_match))){
         convert_year=function(yy){
@@ -236,7 +236,7 @@ rename_files=function(files){
         file_day_end=sprintf("%02d",as.integer(range_match[,6]))
       } else{
         #Quarter + Year
-        qy=str_match(fname_lower,"(?:(\\\\d{4})\\\\s*(?:q|qtr|quarter)\\\\s*([1-4])|(?:q|qtr|quarter)\\\\s*([1-4])\\\\s*(\\\\d{4}))")
+        qy=str_match(fname_lower,"(?:(\\d{4})\\s*(?:q|qtr|quarter)\\s*([1-4])|(?:q|qtr|quarter)\\s*([1-4])\\s*(\\d{4}))")
         if(!all(is.na(qy))){
           if(!is.na(qy[2]) && !is.na(qy[3])){
             file_year=qy[2]
@@ -248,29 +248,29 @@ rename_files=function(files){
         }
         #Quarter Without Year
         if(is.na(quarter_num)){
-          qm=str_match(fname_lower,"(?:([1-4])\\\\s*qtr|([1-4])\\\\s*q)")
+          qm=str_match(fname_lower,"(?:([1-4])\\s*qtr|([1-4])\\s*q)")
           if(!all(is.na(qm))){
             quarter_num=as.integer(na.omit(qm[2:3])[1])
           }
         }
         if(!is.na(quarter_num)){
           if(is.na(file_year)){
-            created_time=file.info(f)$ctime
+            created_time=suppressWarnings(file.info(f)$ctime)
             if(!is.na(created_time)) file_year=format(created_time,"%Y")
           }
           file_month=sprintf("%02d",c(3,6,9,12)[quarter_num])
           file_day="01"
         } else{
           #MM.DD.YYYY or MM-DD-YYYY first
-          mdy_alt=str_match(fname_lower,"(\\\\d{1,2})[\\\\.\\\\-](\\\\d{1,2})[\\\\.\\\\-](\\\\d{4})")
+          mdy_alt=str_match(fname_lower,"(\\d{1,2})[\\.\\-](\\d{1,2})[\\.\\-](\\d{4})")
           if(!all(is.na(mdy_alt))){
             file_month=sprintf("%02d",as.integer(mdy_alt[1,2]))
             file_day=sprintf("%02d",as.integer(mdy_alt[1,3]))
             file_year=mdy_alt[1,4]
           } else {
             #Existing YMD
-            ymd=str_match(fname,"(\\\\d{4})[-\\\\.]?(\\\\d{1,2})(?:[-\\\\.]?(\\\\d{1,2}))?")
-            mdy=str_match(fname,"(\\\\d{1,2})[-\\\\.]?(\\\\d{1,2})[-\\\\.]?(\\\\d{4})")
+            ymd=str_match(fname,"(\\d{4})[-\\.]?(\\d{1,2})(?:[-\\.]?(\\d{1,2}))?")
+            mdy=str_match(fname,"(\\d{1,2})[-\\.]?(\\d{1,2})[-\\.]?(\\d{4})")
             if(!all(is.na(ymd)) && !is.na(ymd[1,2])){
               file_year=ymd[1,2]
               file_month=sprintf("%02d",as.integer(ymd[1,3]))
@@ -283,7 +283,7 @@ rename_files=function(files){
           }
           #Fallback year
           if(is.na(file_year)){
-            created_time=file.info(f)$ctime
+            created_time=suppressWarnings(file.info(f)$ctime)
             if(!is.na(created_time)) file_year=format(created_time,"%Y")
           }
         }
@@ -293,22 +293,1443 @@ rename_files=function(files){
     ext=file_ext(fname)
     new_name=NA
     if(!is.na(file_year_end)){
-      new_name=paste0(label, " ",file_year,".",file_month,".",file_day," - ",file_year_end,".",file_month_end,".",file_day_end)
+      new_name=paste0(label," ",file_year,".",file_month,".",file_day," - ",file_year_end,".",file_month_end,".",file_day_end)
     } else if(!is.na(quarter_num) && !is.na(file_year)){
-      new_name=paste0(label, " ",file_year,".Q",quarter_num)
+      new_name=paste0(label," ",file_year,".Q",quarter_num)
     } else if(!is.na(file_year) && !is.na(file_month)){
-      if(!is.na(file_day)) new_name=paste0(label, " ", file_year,".",file_month,".",file_day)
-      else new_name=paste0(label, " ",file_year,".",file_month)
+      if(!is.na(file_day)) new_name=paste0(label," ", file_year,".",file_month,".",file_day)
+      else new_name=paste0(label," ",file_year,".",file_month)
     }
     if(bonus_flag && !is.na(new_name)) new_name=paste(new_name,"Bonus")
     #Rename
     if(!is.na(new_name)){
-      new_file=file.path(dirname(f), paste0(new_name,".",ext))
+      new_file=file.path(dirname(f),paste0(new_name,".",ext))
       if(f!=new_file){
         file.rename(f,new_file)
         message("Renamed: ",fname," -> ",basename(new_file))
       }
     }
+  }
+}
+column_renaming_payroll=function(df_list){
+  envir=parent.frame()
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    found_employee_id=FALSE
+    #Look for Employee ID variants
+    for(col_name in colnames(df)){
+      if(grepl("employee",col_name,ignore.case=TRUE)){
+        values=as.character(df[[col_name]])
+        non_na_values=values[!is.na(values)]
+        if(length(non_na_values)>0 && all(grepl("^[A-Za-z0-9]+$",non_na_values))){
+          colnames(df)[which(colnames(df)==col_name)]="Employee ID"
+          df[["Employee ID"]]=as.character(df[["Employee ID"]])
+          found_employee_id=TRUE
+          break
+        }
+      }
+    }
+    #If no Employee ID found, look for Workday ID
+    if(!found_employee_id){
+      for(col_name in colnames(df)){
+        col_trim=trimws(col_name)
+        if(grepl("^workday[ ._]*id$",col_trim,ignore.case=TRUE)){
+          message("Matched Workday ID column: ",col_name," in ",df_name," - Renaming to Employee ID")
+          colnames(df)[which(colnames(df)==col_name)]="Employee ID"
+          df[["Employee ID"]]=as.character(df[["Employee ID"]])
+          found_employee_id=TRUE
+          break
+        }
+      }
+    }
+    #If still not found, look for Associate ID
+    if(!found_employee_id){
+      for(col_name in colnames(df)){
+        col_trim=trimws(col_name)
+        if(grepl("^associate[ ._]*id$",col_trim,ignore.case=TRUE)){
+          message("Matched Associate ID column: ",col_name," in ",df_name," - Renaming to Employee ID")
+          colnames(df)[which(colnames(df)==col_name)]="Employee ID"
+          df[["Employee ID"]]=as.character(df[["Employee ID"]])
+          found_employee_id=TRUE
+          break
+        }
+      }
+    }
+    #Remove rows with NA in Employee ID if column exists
+    if("Employee ID" %in% colnames(df)){
+      df=df[!is.na(df[["Employee ID"]]),]
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Employee ID column renamed.")
+  #Loop through each data frame
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    full_name_col=grep("^employee$|employee[ _\\\\.]*name$|^worker$|worker[ _\\\\.]*name$|full[ _\\\\.]*name$|^name$",
+                        colnames(df),ignore.case=TRUE)
+    if(length(full_name_col)==1){
+      full_names=as.character(df[[full_name_col]])
+      df$`First Name`=sapply(full_names,function(x){
+        x=trimws(x)
+        if(grepl(",",x)){
+          strsplit(x,",\\\\s*")[[1]][2] %||% NA #After comma
+        } else{
+          strsplit(x,"\\\\s+")[[1]][1] #First word
+        }
+      })
+      df$`Last Name`=sapply(full_names,function(x){
+        x=trimws(x)
+        if(grepl(",",x)){
+          strsplit(x,",\\\\s*")[[1]][1] #Before comma
+        } else{
+          parts=strsplit(x,"\\\\s+")[[1]]
+          if(length(parts)>1) paste(parts[-1],collapse=" ") else NA
+        }
+      })
+      df=df[,-full_name_col,drop=FALSE]
+    }
+    #Separate first/last name columns
+    first_name_col=grep("employee[ _\\\\.]*first|worker[ _\\\\.]*first",colnames(df),ignore.case=TRUE)
+    last_name_col=grep("employee[ _\\\\.]*last|worker[ _\\\\.]*last",colnames(df),ignore.case=TRUE)
+    if(length(first_name_col)==1) colnames(df)[first_name_col]="First Name"
+    if(length(last_name_col)==1) colnames(df)[last_name_col]="Last Name"
+    #Columns already named like "First Name"/"Last Name"
+    existing_last=grep("last[ _\\\\.]*name",colnames(df),ignore.case=TRUE)
+    existing_first=grep("first[ _\\\\.]*name",colnames(df),ignore.case=TRUE)
+    if(length(existing_last)==1) colnames(df)[existing_last]="Last Name"
+    if(length(existing_first)==1) colnames(df)[existing_first]="First Name"
+    #Remove parentheses and contents in First/Last Name
+    if("First Name" %in% colnames(df)){
+      df$`First Name`=gsub("\\\\s*\\([^)]*\\\\)","",df$`First Name`)
+    }
+    if("Last Name" %in% colnames(df)){
+      df$`Last Name`=gsub("\\\\s*\\\\([^)]*\\\\)","",df$`Last Name`)
+    }
+    #Save updated data frame
+    assign(df_name,df,envir=envir)
+  }
+  message("First Name and Last Name columns renamed.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Find column named "company" ignoring case
+    idx=grep("^company$",colnames(df),ignore.case=TRUE)
+    if(length(idx)==1){
+      colnames(df)[idx]="Company"
+      #Standardize "USA" and "LLC" and "INC" in the Company column
+      df$Company=gsub("\\\\busa\\\\b","USA",df$Company,ignore.case=TRUE)
+      df$Company=gsub("\\\\bllc\\\\b","LLC",df$Company,ignore.case=TRUE)
+      df$Company=gsub("\\\\binc\\\\b","INC",df$Company,ignore.case=TRUE)
+    }
+    #Find column named "company code"
+    company_code_idx=grep("^company[ _\\\\.]*code$",colnames(df),ignore.case=TRUE)
+    if(length(company_code_idx)==1){
+      colnames(df)[company_code_idx]="Company Code"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Company and Company Code columns standardized.")
+  #Loop through each data frame in the list
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Identify columns with job/title, position/title, business title, or position name, but exclude "position id"
+    job_title_col_index=which(sapply(colnames(df),function(col_name){
+      grepl("job.*title|title.*job|position.*title|title.*position|position|business[_.\\\\s]*title|position[_.\\\\s]*name",
+            col_name,ignore.case=TRUE) && !grepl("position[ _\\\\.]*id",col_name,ignore.case=TRUE)
+    }))
+    #Rename the first matching column to "Job Title"
+    if(length(job_title_col_index)>0){
+      colnames(df)[job_title_col_index[1]]="Job Title"
+    }
+    #Remove suffix after hyphen if at least 50% match with name
+    if("Job Title" %in% colnames(df) && all(c("First Name","Last Name") %in% colnames(df))){
+      df$`Job Title`=mapply(function(title,first,last){
+        title=as.character(title)
+        #Remove leading numbers and hyphen
+        title=gsub("^[0-9]+\\\\s*-\\\\s*","",title)
+        full_name=paste(first,last)
+        #Split on last hyphen (if any)
+        parts=strsplit(title,"\\\\s*-\\\\s*")[[1]]
+        if(length(parts)>1){
+          main_title=paste(parts[-length(parts)],collapse=" - ")
+          suffix=parts[length(parts)]
+          #Compute similarity
+          match_chars=sum(unlist(strsplit(tolower(full_name),"")) %in% unlist(strsplit(tolower(suffix),"")))
+          match_ratio=match_chars/nchar(full_name)
+          if(match_ratio>=0.5){
+            title=main_title
+          }
+        }
+        trimws(title)
+      },df$`Job Title`,df$`First Name`,df$`Last Name`)
+    }
+    #Rename any "Position ID" variants to standard "Position ID"
+    pos_id_col_index=grep("position[ _\\\\.]*id",colnames(df),ignore.case=TRUE)
+    if(length(pos_id_col_index)>0){
+      colnames(df)[pos_id_col_index]="Position ID"
+    }
+    #Save the modified data frame back to the environment
+    assign(df_name,df,envir=envir)
+  }
+  message("Job Title column renamed.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    work_state_assigned=FALSE
+    ws_idx=which(grepl("state[ ._]*1",colnames(df),ignore.case=TRUE) & grepl("state$",colnames(df),ignore.case=TRUE))
+    if(length(ws_idx)==1){
+      colnames(df)[ws_idx]="Work State"
+      work_state_assigned=TRUE
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    work_state_assigned=FALSE
+    #Explicit match for "Worked in State"
+    worked_state_idx=grep("^worked[ ._]*in[ ._]*state$",colnames(df),ignore.case=TRUE)
+    if(length(worked_state_idx)==1){
+      colnames(df)[worked_state_idx]="Work State"
+      work_state_assigned=TRUE
+    }
+    state_cols=grep("state$",colnames(df),ignore.case=TRUE) #Only columns ending with \'state\'
+    #"location state" → Work State
+    if(length(state_cols)>0 && !work_state_assigned){
+      location_state_col=grep("^location[ ._]*state$",colnames(df)[state_cols],ignore.case=TRUE)
+      if(length(location_state_col)==1){
+        ws_col=state_cols[location_state_col]
+        colnames(df)[ws_col]="Work State"
+        work_state_assigned=TRUE
+        state_cols=setdiff(state_cols,ws_col)
+      }
+    }
+    #If only one remaining state column → Work State
+    if(length(state_cols)==1 && !work_state_assigned){
+      colnames(df)[state_cols]="Work State"
+      work_state_assigned=TRUE
+      state_cols=integer(0)
+    }
+    #Prefer columns containing "work"
+    if(length(state_cols)>1 && !work_state_assigned){
+      work_state_col=grep("work",colnames(df)[state_cols],ignore.case=TRUE)
+      if(length(work_state_col)==1){
+        ws_col=state_cols[work_state_col]
+        colnames(df)[ws_col]="Work State"
+        work_state_assigned=TRUE
+        state_cols=setdiff(state_cols,ws_col)
+      }
+    }
+    #Tax-state logic
+    if(length(state_cols)>0){
+      tax_state_cols=grep("tax",colnames(df)[state_cols],ignore.case=TRUE)
+      tax_state_last_cols=grep("state$",colnames(df)[state_cols][tax_state_cols],ignore.case=TRUE)
+      if(length(tax_state_last_cols)>0){
+        valid_cols=state_cols[tax_state_cols[tax_state_last_cols]]
+        if(!work_state_assigned){
+          non_na_counts=colSums(!is.na(df[,valid_cols,drop=FALSE]))
+          best_col=valid_cols[which.max(non_na_counts)]
+          colnames(df)[best_col]="Work State"
+          work_state_assigned=TRUE
+          state_cols=setdiff(state_cols,best_col)
+        }
+        for(col in state_cols){
+          if(colnames(df)[col]!="Work State"){
+            colnames(df)[col]="Resident State"
+          }
+        }
+      }
+    }
+    #Remaining state columns → Resident State
+    for(col in state_cols){
+      if(colnames(df)[col]!="Work State"){
+        colnames(df)[col]="Resident State"
+      }
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Work State and Resident State column renamed.")
+  #Check if ANY data frame already has a "Work State" column
+  has_work_state=any(sapply(df_list,function(df_name){
+    df=get(df_name,envir=envir)
+    any(colnames(df)=="Work State")
+  }))
+  #Only proceed if NO data frame has "Work State"
+  if(!has_work_state){
+    for(df_name in df_list){
+      #Only target payroll data frames (case-insensitive)
+      if(!grepl("payroll",df_name,ignore.case=TRUE)) next
+      df=get(df_name,envir=envir)
+      #Identify XX_wages columns
+      wage_cols=grep("^[A-Za-z]{2}_wages$",colnames(df),value=TRUE)
+      #Skip if no wage columns found
+      if(length(wage_cols)==0) next
+      #Initialize new columns
+      df$`Work State`=NA_character_
+      df$`Resident State`=NA_character_
+      #Extract state codes from column names
+      state_codes=toupper(sub("_wages$","",wage_cols))
+      #Matrix of wage values
+      wage_matrix=as.matrix(df[,wage_cols,drop=FALSE])
+      colnames(wage_matrix)=state_codes
+      for(i in seq_len(nrow(df))){
+        row_vals=wage_matrix[i,]
+        #States with non-zero wages
+        non_zero=row_vals[row_vals!=0 & !is.na(row_vals)]
+        if(length(non_zero)==0) next
+        #Order states by wage descending
+        ordered_states=names(sort(non_zero,decreasing=TRUE))
+        #Assign Work / Resident State
+        df$`Work State`[i]=ordered_states[1]
+        if(length(ordered_states)>1){
+          df$`Resident State`[i]=ordered_states[2]
+        }
+      }
+      #Assign updated data frame back to environment
+      assign(df_name,df,envir=envir)
+    }
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Try to rename any \'location\' column to \'Work Location\'
+    location_cols=grep("location",colnames(df),ignore.case=TRUE)
+    work_location_assigned=FALSE
+    if(length(location_cols)>0){
+      colnames(df)[location_cols]="Work Location"
+      work_location_assigned=TRUE
+    }
+    #If no column was renamed, look for "worked in department"
+    if(!work_location_assigned){
+      dept_col_idx=grep("^worked[ ._]*in[ ._]*department$",colnames(df),ignore.case=TRUE)
+      if(length(dept_col_idx)==1){
+        colnames(df)[dept_col_idx]="Worked in Department"
+        dept_values=as.character(df[["Worked in Department"]])
+        #Check if all values are numeric
+        if(all(grepl("^[0-9]+$",dept_values))){
+          #Take first three digits from each entry
+          dept_codes=substr(dept_values,1,3)
+          #Match against location_codes
+          matched_locations=sapply(dept_codes,function(code){
+            idx=which(location_codes$`Location Code`==code)
+            if(length(idx)==1){
+              location_codes$`Work Location`[idx]
+            } else{
+              NA
+            }
+          })
+          df$`Work Location`=matched_locations
+          work_location_assigned=TRUE
+        }
+      }
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Work Location column processed, including fallback mapping from Worked in Department.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Look for a column titled "home department"
+    home_dept_idx=grep("^home[ ._]*department$",colnames(df),ignore.case=TRUE)
+    if(length(home_dept_idx)==1){
+      colnames(df)[home_dept_idx]="Home Department"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Home Department column renamed if found.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Look for a column titled "tax id"
+    tax_id_idx=grep("^tax[ ._]*id$",colnames(df),ignore.case=TRUE)
+    if(length(tax_id_idx)==1){
+      colnames(df)[tax_id_idx]="Tax ID"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Tax ID column renamed if found.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Only proceed if required columns exist
+    if(all(c("Home Department","Worked in Department","Work Location") %in% colnames(df))){
+      df$`Home Department`=mapply(function(home,worked,work_loc){
+        home=as.character(home)
+        worked=as.character(worked)
+        work_loc=as.character(work_loc)
+        #Pattern: digits - text - text (hyphens may have spaces around them)
+        pattern="^\\\\s*(\\\\d+)\\\\s*-\\\\s*(.*?)\\\\s*-\\\\s*(.*)\\\\s*$"
+        if(grepl(pattern,home)){
+          parts=sub(pattern,"\\\\1;\\\\2;\\\\3",home)
+          split_parts=strsplit(parts,";")[[1]]
+          dept_code=split_parts[1]
+          middle_text=split_parts[2]
+          end_text=split_parts[3]
+          #Case-insensitive match for Work Location
+          if(dept_code==worked && tolower(end_text)==tolower(work_loc)){
+            return(trimws(middle_text))
+          }
+        }
+        #Otherwise return original
+        return(home)
+      },df$`Home Department`,df$`Worked in Department`,df$`Work Location`)
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Home Department column cleaned (case-insensitive match for Work Location).")
+  #Loop through each data frame in the list
+  for(df_name in df_list){
+    #Get the actual data frame
+    df=get(df_name,envir=envir)
+    #Find column named exactly "city" (case-insensitive)
+    city_col=which(tolower(colnames(df))=="city")
+    #Rename if found
+    if(length(city_col)==1){
+      colnames(df)[city_col]="Resident City"
+    }
+    #Save back to environment
+    assign(df_name,df,envir=envir)
+  }
+  message("Resident City column renamed.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    date_cols=grep("date",names(df),ignore.case=TRUE,value=TRUE)
+    if(length(date_cols)>0){
+      #Keep rows where NONE of the date columns contain any letters
+      rows_to_keep=apply(df[date_cols],1,function(row_vals){
+        all(sapply(row_vals,function(x){
+          if(is.na(x)) return(TRUE)
+          #Return TRUE if no letters in the string (case-insensitive)
+          !grepl("[a-z]",as.character(x),ignore.case=TRUE)
+        }))
+      })
+      df=df[rows_to_keep,,drop=FALSE]
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    cn=colnames(df)
+    cn_lower=tolower(cn)
+    sep="[ _\\\\.]"
+    #Helper
+    exact=function(pattern){
+      grep(paste0("^",pattern,"$"),cn_lower)
+    }
+    #Check for FULL explicit trio
+    hire_explicit=exact(paste0("hire",sep,"date"))
+    rehire_explicit=exact(paste0("rehire",sep,"date"))
+    term_explicit=c(exact(paste0("termination",sep,"date")),exact(paste0("term",sep,"date")))
+    has_full_trio=length(hire_explicit)==1 && length(rehire_explicit)==1 && length(term_explicit)>=1
+    #Use explicit trio ONLY
+    if(has_full_trio){
+      colnames(df)[hire_explicit]="Hire Date"
+      df$`Hire Date`=convert_to_date(df[[hire_explicit]])
+      colnames(df)[rehire_explicit]="Rehire Date"
+      df$`Rehire Date`=convert_to_date(df[[rehire_explicit]])
+      term_idx=term_explicit[1]
+      colnames(df)[term_idx]="Termination Date"
+      df$`Termination Date`=convert_to_date(df[[term_idx]])
+    } else{
+      #Fallback Logic (only if trio missing)
+      #Hire Date
+      hire_idx=exact(paste0("original",sep,"hire",sep,"date"))
+      if(length(hire_idx)==0){
+        hire_idx=grep("^hire.*date$|^date.*hire$",cn_lower)
+      }
+      if(length(hire_idx)>0){
+        hire_idx=hire_idx[1]
+        colnames(df)[hire_idx]="Hire Date"
+        df$`Hire Date`=convert_to_date(df[[hire_idx]])
+      }
+      #Rehire Date
+      rehire_idx=grep("continuous.*service.*date",cn_lower)
+      if(length(rehire_idx)==0){
+        rehire_idx=grep("^rehire.*date$|^date.*rehire$",cn_lower)
+      }
+      if(length(rehire_idx)>0){
+        rehire_idx=rehire_idx[1]
+        colnames(df)[rehire_idx]="Rehire Date"
+        df$`Rehire Date`=convert_to_date(df[[rehire_idx]])
+      }
+      #Termination Date
+      term_idx=grep("^termination.*date$|^term.*date$|^date.*term$",cn_lower)
+      if(length(term_idx)>0){
+        term_idx=term_idx[1]
+        colnames(df)[term_idx]="Termination Date"
+        df$`Termination Date`=convert_to_date(df[[term_idx]])
+      }
+    }
+    #Cleanup
+    if(all(c("Hire Date","Rehire Date") %in% colnames(df))){
+      same_dates=!is.na(df$`Hire Date`) & !is.na(df$`Rehire Date`) & df$`Hire Date`==df$`Rehire Date`
+      df$`Rehire Date`[same_dates]=as.Date(NA)
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Hire Date, Rehire Date, and Termination Date columns renamed.")
+  #Define status keywords (lowercase)
+  status_keywords=c("hired","rehired","active","a","a-active","d","d-deceased",
+                    "terminated","t-terminated","fired","resigned","t","laid off","furloughed",
+                    "leave with pay","leave without pay","leave","on leave","L-Leave")
+  #Helper regex pattern for flexible separators: space, underscore, or period
+  sep_pattern="[ _\\\\.]"
+  active_values=c("Active","Hired","Rehired","A","A-Active")
+  terminated_values=c("Terminated","Fired","Resigned","T","T-Terminated")
+  deceased_values=c("D","Deceased","D-Deceased")
+  leave_values=c("L","Leave with Pay","Leave without Pay","Leave","On Leave","L-Leave")
+  for(df_name in df_list){
+    #Skip any df_name that does NOT contain census, pay_date, or payroll
+    if(!grepl("census|pay_date|payroll",df_name,ignore.case=TRUE)){
+      next
+    }
+    df=get(df_name,envir=envir)
+    #Pattern: "employee" + separator + "status"
+    status_col_indices=which(grepl("employee[ _.-]+status",colnames(df),ignore.case=TRUE)| #Flexible "employee status"
+                              tolower(colnames(df)) %in% c("employee_status","status")) #Exact literal or just "status"
+    #Fallback: columns where all values are in status lists
+    if(length(status_col_indices)==0){
+      all_status_values=c(active_values,terminated_values,deceased_values,leave_values)
+      status_col_indices=which(sapply(df,function(col){
+        if(is.character(col)||is.factor(col)){
+          vals=na.omit(as.character(col))
+          length(vals)>0 && all(vals %in% all_status_values)
+        } else FALSE
+      }))
+    }
+    #Rename columns that match status keywords
+    found_employee_status=FALSE
+    if(length(status_col_indices)>0){
+      all_status_values_lower=tolower(c(active_values,terminated_values,deceased_values,leave_values))
+      for(col_index in status_col_indices){
+        status_col=df[[col_index]]
+        status_col_clean=status_col[!is.na(status_col)]
+        status_col_clean_lower=tolower(as.character(status_col_clean))
+        if(length(status_col_clean)>0 && all(status_col_clean_lower %in% all_status_values_lower)){
+          colnames(df)[col_index]="Employee Status"
+          found_employee_status=TRUE
+          break
+        }
+      }
+    }
+    #If no "Employee Status" found, try to find an "active status" column
+    if(!found_employee_status){
+      active_status_pattern=paste0("^active",sep_pattern,"*status$")
+      active_idx=grep(active_status_pattern,colnames(df),ignore.case=TRUE)
+      if(length(active_idx)==1){
+        #Rename to Employee Status
+        colnames(df)[active_idx]="Employee Status"
+        df[["Employee Status"]]=as.character(df[["Employee Status"]])
+        #Check for "on leave" column first and mark those rows "On Leave" ONLY IF Termination Date IS NA
+        on_leave_pattern=paste0("^on",sep_pattern,"*leave$")
+        on_leave_idx=grep(on_leave_pattern,colnames(df),ignore.case=TRUE)
+        if(length(on_leave_idx)==1){
+          on_leave_col=as.character(df[[on_leave_idx]])
+          yes_leave_idx=which(tolower(on_leave_col)=="yes")
+          if(length(yes_leave_idx)>0){
+            if("Termination Date" %in% colnames(df)){
+              if(!inherits(df[["Termination Date"]],"Date")){
+                df[["Termination Date"]]=as.Date(df[["Termination Date"]],tryFormats=c("%Y-%m-%d","%m/%d/%Y","%d-%b-%Y"))
+              }
+              no_term_idx=yes_leave_idx[is.na(df[["Termination Date"]][yes_leave_idx])]
+              if(length(no_term_idx)>0){
+                df[["Employee Status"]][no_term_idx]="On Leave"
+              }
+            } else {
+              df[["Employee Status"]][yes_leave_idx]="On Leave"
+            }
+          }
+        }
+        #Replace "Yes" with "Active" in Employee Status (except those already "On Leave")
+        yes_idx=which(tolower(df[["Employee Status"]])=="yes")
+        if(length(yes_idx)>0){
+          df[["Employee Status"]][yes_idx]="Active"
+        }
+        found_employee_status=TRUE
+      }
+    }
+    #Convert Termination Date to Date if exists
+    if("Termination Date" %in% colnames(df)){
+      if(!inherits(df[["Termination Date"]],"Date")){
+        df[["Termination Date"]]=as.Date(df[["Termination Date"]],tryFormats=c("%Y-%m-%d","%m/%d/%Y","%d-%b-%Y"))
+      }
+      #For any row with non-NA Termination Date, override/set Employee Status to "Terminated"
+      term_idx=which(!is.na(df[["Termination Date"]]))
+      if(length(term_idx)>0){
+        if(!("Employee Status" %in% colnames(df))){
+          df[["Employee Status"]]=NA_character_
+        }
+        #Default: mark terminated
+        df[["Employee Status"]][term_idx]="Terminated"
+        #Override: rehired AFTER termination => Active
+        if("Rehire Date" %in% colnames(df)){
+          if(!inherits(df[["Rehire Date"]],"Date")){
+            df[["Rehire Date"]]=as.Date(df[["Rehire Date"]],tryFormats=c("%Y-%m-%d","%m/%d/%Y","%d-%b-%Y"))
+          }
+          rehire_after_term_idx=term_idx[!is.na(df[["Rehire Date"]][term_idx]) &
+                                          df[["Rehire Date"]][term_idx]>df[["Termination Date"]][term_idx]]
+          if(length(rehire_after_term_idx)>0){
+            df[["Employee Status"]][rehire_after_term_idx]="Active"
+          }
+        }
+      }
+    }
+    #Fill any remaining NA or empty Employee Status with "Unknown"
+    if("Employee Status" %in% colnames(df)){
+      na_status_idx=which(is.na(df[["Employee Status"]])|df[["Employee Status"]]=="")
+      if(length(na_status_idx)>0){
+        df[["Employee Status"]][na_status_idx]="Unknown"
+      }
+    } else{
+      df[["Employee Status"]]="Unknown"
+    }
+    #Save modified data frame back to environment
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Check if "Employee Status" column exists (case-insensitive)
+    status_col_idx=which(tolower(colnames(df))=="employee status")
+    if(length(status_col_idx)>0){
+      col_vals=as.character(df[[status_col_idx]])
+      col_vals=trimws(col_vals) #remove extra spaces
+      #Check if all non-NA values are "Unknown"
+      if(length(col_vals[!is.na(col_vals)])>0 && all(col_vals[!is.na(col_vals)]=="Unknown")){
+        #Remove the column
+        df[[status_col_idx]]=NULL
+      }
+    }
+    #Assign back to original name
+    assign(df_name,df,envir=envir)
+  }
+  message("Employee Status column renamed.")
+  #Define the valid values for the Classification column (all lowercase)
+  valid_values=tolower(c("Full-Time","Full Time","Full","F","FARG","FORG","FT","F - Full Time","F - Full-Time",
+                          "Part-Time","Part Time","Part","P","PARG","PT","INTR","P - Part Time","P - Part-Time"))
+  #Define the threshold for "overwhelming majority" (e.g., 90%)
+  majority_threshold=0.9
+  #Loop through each data frame in the list
+  for(df_name in df_list){
+    #Get the actual data frame
+    df=get(df_name,envir=envir)
+    #Loop through each column in the data frame
+    for(col_name in colnames(df)){
+      #Convert the column to lowercase for comparison
+      col_lower=tolower(as.character(df[[col_name]]))
+      logical_vec=col_lower %in% valid_values
+      if(length(logical_vec)>0){
+        valid_proportion=mean(logical_vec,na.rm=TRUE)
+        if(!is.na(valid_proportion) && valid_proportion>=majority_threshold){
+          colnames(df)[colnames(df)==col_name]="Classification"
+          break
+        }
+      }
+    }
+    #Save the modified data frame back to the environment
+    assign(df_name,df,envir=envir)
+  }
+  message("Classification column renamed.")
+  #Define the valid values for the Wage Type column
+  valid_values_wage=c("Salaried","Salary","Salary Exempt","Salary Non Exempt","Salary Non-Exempt","S",
+                      "Hourly","Hourly Non-Exempt","Hourly Non Exempt","Hourly Exempt","Hour","H")
+  #Convert valid values to lowercase once
+  valid_values_wage_lower=tolower(valid_values_wage)
+  #Loop through each data frame in the list
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    found=FALSE
+    #First pass: look for a column whose values (case-insensitive) are all in the valid list
+    for(col_name in colnames(df)){
+      non_na_values=df[[col_name]][!is.na(df[[col_name]])]
+      if(length(non_na_values)>0 && all(tolower(non_na_values) %in% valid_values_wage_lower)){
+        colnames(df)[colnames(df)==col_name]="Wage Type"
+        found=TRUE
+        break
+      }
+    }
+    #Second pass (fallback)
+    if(!found){
+      #Try to find a column with both "wage" and "type"
+      wage_type_cols=grep("wage",colnames(df),ignore.case=TRUE,value=TRUE)
+      wage_type_cols=wage_type_cols[grepl("type",wage_type_cols,ignore.case=TRUE)]
+      if(length(wage_type_cols)>0){
+        #Rename first "wage-type" column found
+        colnames(df)[colnames(df)==wage_type_cols[1]]="Wage Type"
+      } else{
+        #If none found, try to find "pay rate type"
+        pay_rate_type_cols=grep("pay[ _\\\\.]*rate[ _\\\\.]*type",colnames(df),ignore.case=TRUE,value=TRUE)
+        if(length(pay_rate_type_cols)>0){
+          #Rename first "pay rate type" column found
+          colnames(df)[colnames(df)==pay_rate_type_cols[1]]="Wage Type"
+        }
+      }
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Wage Type column renamed.")
+  threshold=0.90 #adjust as needed
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    dup_names=unique(names(df)[duplicated(names(df))])
+    for(col in dup_names){
+      col_positions=which(names(df)==col)
+      mostly_na=sapply(col_positions,function(i){
+        vals=trimws(as.character(df[[i]]))
+        empty_pct=mean(is.na(df[[i]])|vals=="NA"|vals=="")
+        empty_pct>=threshold
+      })
+      #Remove mostly-empty duplicates if at least one better version exists
+      if(any(mostly_na) && sum(!mostly_na)>=1){
+        remove_positions=col_positions[mostly_na]
+        df=df[,-remove_positions,drop=FALSE]
+      }
+    }
+    assign(df_name,df,envir=envir)
+  }
+    remove_worse_duplicates=function(df){
+    #Function to count "bad" values
+    count_bad=function(x){
+      sum(is.na(x)|trimws(as.character(x))==""|toupper(trimws(as.character(x)))=="NA")
+    }
+    cols=colnames(df)
+    dup_names=unique(cols[duplicated(cols)])
+    #Loop through each duplicated column name
+    for(name in dup_names){
+      idx=which(cols==name)
+      #Compare all duplicates pairwise
+      keep_idx=idx[1]
+      for(i in idx[-1]){
+        bad_keep=count_bad(df[[keep_idx]])
+        bad_i=count_bad(df[[i]])
+        #If current column has fewer bad values, replace keep
+        if(bad_i<bad_keep){
+          keep_idx=i
+        }
+      }
+      #Drop all except the best one
+      drop_idx=setdiff(idx,keep_idx)
+      df=df[,-drop_idx,drop=FALSE]
+      #Update colnames after dropping
+      cols=colnames(df)
+    }
+    return(df)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Remove worse duplicate columns
+    df=remove_worse_duplicates(df)
+    assign(df_name,df,envir=envir)
+  }
+  #Define replacements for Wage Type
+  salaried_values=c("Salaried","Salary","Salary Exempt","Salary Non Exempt","Salary Non-Exempt","S")
+  hourly_values=c("Hourly","Hourly Non-Exempt","Hourly Non Exempt","Hourly Exempt","Hour","H")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    if("Wage Type" %in% colnames(df)){
+      df=df%>%mutate(`Wage Type`=case_when(`Wage Type` %in% salaried_values~"Salaried",
+                                            `Wage Type` %in% hourly_values~"Hourly",TRUE~`Wage Type`))
+    }
+    assign(df_name,df,envir=envir)
+  }
+  #Match "pay rate" variations or any column that contains "rate" as a whole word or suffix
+  pattern="(?i)pay[ _-]*rate|(^|[^a-zA-Z])rate([^a-zA-Z]|$)"
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Find all matches to pattern
+    col_match=grep(pattern,colnames(df),perl=TRUE)
+    if(length(col_match)>0){
+      #Rename the first match to "Pay Rate"
+      colnames(df)[col_match[1]]="Pay Rate"  
+    } else{
+      #If no Pay Rate, search for salary column
+      salary_match=grep("(?i)salary",colnames(df),perl=TRUE)
+      if(length(salary_match)>0){
+        colnames(df)[salary_match[1]]="Pay Rate"
+      }
+    }
+    #Ensure "Pay Rate" exists
+    if("Pay Rate" %in% colnames(df)){
+      #Clean Pay Rate: remove $ and commas, convert to numeric
+      df$`Pay Rate`=as.numeric(gsub("[\\\\$,]","",as.character(df$`Pay Rate`)))
+      #Check for salaried rows exceeding 500
+      if("Wage Type" %in% colnames(df)){
+        salaried_rows=which(df$`Wage Type` %in% salaried_values)
+        if(length(salaried_rows)==0||all(df$`Pay Rate`[salaried_rows]<=500)){
+          #Only apply adjustment if no salaried rows > 500
+          df$`Pay Rate`=ifelse(df$`Wage Type` %in% salaried_values,df$`Pay Rate`/26,
+            ifelse(df$`Wage Type` %in% hourly_values, df$`Pay Rate`/2080,df$`Pay Rate`))
+        } #Else skip adjustment
+      } else{
+        #If Wage Type column does not exist, leave Pay Rate as-is
+      }
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Pay Rate column renamed.")
+  date_cols=c("Hire Date","Rehire Date","Termination Date")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    for(col in intersect(date_cols,names(df))){
+      df[[col]]=convert_to_date(df[[col]])
+    }
+    assign(df_name,df,envir=envir)
+  }
+  #Check if both "payroll" and "census" data frames are in df_list
+  has_payroll=any(grepl("payroll",df_list,ignore.case=TRUE))
+  has_census=any(grepl("census",df_list,ignore.case=TRUE))
+  #Vectors to track Pay Date column status
+  created_pay_date=c()
+  renamed_pay_date=c()
+  #Loop through each data frame
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    date_cols=grep("^(pay|check)[._ ]?date$",colnames(df),ignore.case=TRUE,value=TRUE)
+    if(length(date_cols)>0){
+      #Rename matched columns to "Pay Date"
+      colnames(df)[colnames(df) %in% date_cols]="Pay Date"
+      renamed_pay_date=c(renamed_pay_date,df_name)
+    } else if(grepl("payroll",df_name,ignore.case=TRUE)){
+      #Extract YYYY_MM from df_name like "df_2025_03"
+      matches=regmatches(df_name,regexec("^df_(\\\\d{4})_(\\\\d{2})",df_name))
+      if(length(matches[[1]])>=3){
+        year=as.integer(matches[[1]][2])
+        month_num=as.integer(matches[[1]][3])
+        #Last day of month
+        last_day=as.Date(paste(year,month_num,"01",sep="-")) %m+% months(1)-days(1)
+        #Last Friday of the month
+        weekday_last=as.POSIXlt(last_day)$wday #Sunday = 0
+        offset=(weekday_last-5) %% 7 #Friday = 5
+        last_friday=last_day-offset
+        df$`Pay Date`=convert_to_date(last_friday)
+        created_pay_date=c(created_pay_date,df_name)
+      } else{
+        warning(paste("Unable to extract year/month from df_name:",df_name))
+      }
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Pay Date column renamed.")
+  month_label=if(exists("month",envir=envir)) get("month",envir=envir) else NULL
+  quarter_label=if(exists("quarter",envir=envir)) get("quarter",envir=envir) else NULL
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Skip if df is not actually a dataframe
+    if(!is.data.frame(df)) next
+    if("Pay Date" %in% colnames(df)){
+      df$`Pay Date`=as.Date(df$`Pay Date`)
+      if(!is.null(month_label)){
+        #Defensive: force month_label to character if needed
+        month_label=as.character(month_label)
+        if(is.numeric(month_label)){
+          month_label=month.name[as.integer(month_label)]
+        }
+        month_label=tools::toTitleCase(tolower(month_label))
+        df=df[tools::toTitleCase(tolower(format(df$`Pay Date`,"%B")))==month_label,]
+      } else if(!is.null(quarter_label)){
+        quarter_months_list=list(c("January","February","March"),c("April","May","June"),
+                                  c("July","August","September"),c("October","November","December"))
+        quarter_label=as.integer(quarter_label) #Defensive
+        months_in_quarter=quarter_months_list[[quarter_label]]
+        df=df[format(df$`Pay Date`,"%B") %in% months_in_quarter,]
+      }
+      assign(df_name,df,envir=envir)
+    }
+  }
+  month=month_label
+  quarter=quarter_label
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Skip if df is not a dataframe
+    if(!is.data.frame(df)) next
+    pattern="(?i)^gross([ _-]*(pay|wages)|(_[a-z0-9]{0,10})?)$"
+    matching_cols=grep(pattern,colnames(df),value=TRUE,perl=TRUE)
+    if(length(matching_cols)>0){
+      colnames(df)[colnames(df) %in% matching_cols]="Gross Wages"
+      assign(df_name,df,envir=envir)
+    }
+  }
+  message("Gross Wages column renamed.")
+  #Flag to track if the column already exists in any data frame
+  days_column_found=FALSE
+  #First check if any df already has a suitable "Days in Pay Period" column
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    days_col=grep("days[._ ]*in[._ ]*pay[._ ]*period",colnames(df),ignore.case=TRUE,value=TRUE)
+    if(length(days_col)==1){
+      colnames(df)[colnames(df) %in% days_col]="Days in Pay Period"
+      assign(df_name,df,envir=envir)
+      days_column_found=TRUE
+    }
+  }
+  message("Days in Pay Period column renamed.")
+  #If none were found, create it in payroll data frames only
+  if(!days_column_found){
+    for(df_name in df_list){
+      if(grepl("payroll|pay[._ ]?date",df_name,ignore.case=TRUE)){
+        df=get(df_name,envir=envir)
+        #Check if file name has YYYY_MM or YYYY_QX
+        match_month=regexec("(\\\\d{4})_(\\\\d{2})",df_name)
+        parts_month=regmatches(df_name,match_month)[[1]]
+        match_quarter=regexec("(\\\\d{4})_q(\\\\d)",tolower(df_name))
+        parts_quarter=regmatches(df_name,match_quarter)[[1]]
+        if(length(parts_month)==3){
+          #Case 1: Monthly file (df_YYYY_MM_payroll)
+          year=as.integer(parts_month[2])
+          month_num=as.integer(parts_month[3])
+          first_day=as.Date(sprintf("%04d-%02d-01",year,month_num))
+          days_in_month=as.integer(format(seq(first_day,length=2,by="1 month")[2]-1,"%d"))
+          if("Pay Date" %in% names(df)){
+            if(df_name %in% created_pay_date){
+              df$`Days in Pay Period`=days_in_month
+            } else if(df_name %in% renamed_pay_date){
+              df$`Days in Pay Period`=14
+            } else{
+              df$`Days in Pay Period`=days_in_month
+            }
+          } else{
+            df$`Days in Pay Period`=days_in_month
+          }
+        } else if(length(parts_quarter)==3){
+          #Case 2: Quarterly file (df_YYYY_QX_payroll)
+          if("Pay Date" %in% names(df)){
+            df$`Days in Pay Period`=sapply(df$`Pay Date`,function(pd){
+              if(is.na(pd)) return(NA_integer_)
+              pd=as.Date(pd)
+              first_day=as.Date(sprintf("%04d-%02d-01",year(pd),month(pd)))
+              as.integer(format(seq(first_day,length=2,by="1 month")[2]-1,"%d"))
+            })  
+            #Apply renamed vs created pay date rule
+            if(df_name %in% renamed_pay_date){
+              df$`Days in Pay Period`=14
+            }
+          } else{
+            warning(paste("Quarterly payroll file missing Pay Date column:",df_name))
+          }
+        } else{
+          warning(paste("Could not extract YYYY_MM or YYYY_QX from:",df_name))
+        }
+        assign(df_name,df,envir=envir)
+      }
+    }
+  }
+  #Loop through each data frame in the list
+  renamed_any=FALSE
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    patterns=c("pay period end date","pay period ending date","end date","ending date")
+    renamed=FALSE
+    for(pattern in patterns){
+      regex_pattern=gsub(" ","[ _-]*",pattern,fixed=TRUE)
+      matching_cols=grep(regex_pattern,colnames(df),ignore.case=TRUE,value=TRUE,perl=TRUE)
+      if(length(matching_cols)>0){
+        colnames(df)[colnames(df) %in% matching_cols]="Pay Period End Date"
+        renamed=TRUE
+        renamed_any=TRUE
+        break
+      }
+    }
+    if(renamed){
+      assign(df_name,df,envir=envir)
+    }
+  }
+  message("Pay Period End Date column renamed.")
+  #If no data frame had a column renamed, create "Pay Period End Date" column in payroll df(s)
+  if(!renamed_any){
+    for(df_name in df_list){
+      if(grepl("payroll|pay[ _.-]*date",df_name,ignore.case=TRUE)){
+        df=get(df_name,envir=envir)
+        match=regexec("df_(\\\\d{4})_(\\\\d{2})",df_name)
+        parts=regmatches(df_name,match)[[1]]
+        if("Pay Date" %in% colnames(df)){
+          #Case 1: If it has a "Pay Date" column, use that - 8
+          df$`Pay Period End Date`=as.Date(df$`Pay Date`)-8
+          assign(df_name,df,envir=envir)
+        } else if(length(parts)==3){
+          #Case 2: If the df_name encodes year/month like "df_2025_03_payroll"
+          year=as.integer(parts[2])
+          month_num=as.integer(parts[3])
+          #First and last day of the month
+          first_day=as.Date(sprintf("%04d-%02d-01",year,month_num))
+          last_day=seq(first_day,length=2,by="1 month")[2]-1
+          #Use consistent logic: 8 days before last day of month
+          df$`Pay Period End Date`=last_day-8
+          assign(df_name,df,envir=envir)
+        } else{
+          warning(paste("Could not extract year/month or Pay Date from",df_name))
+        }
+      }
+    }
+  }
+  #Loop through each data frame in the list
+  renamed_any=FALSE
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    patterns=c("pay period start date","pay period starting date","pay period begin date","pay period beginning date",
+                "start date","starting date","begin date","beginning date")
+    renamed=FALSE
+    for(pattern in patterns){
+      regex_pattern=gsub(" ","[ _-]*",pattern,fixed=TRUE)
+      matching_cols=grep(regex_pattern,colnames(df),ignore.case=TRUE,value=TRUE,perl=TRUE)
+      if(length(matching_cols)>0){
+        colnames(df)[colnames(df) %in% matching_cols]="Pay Period Start Date"
+        renamed=TRUE
+        renamed_any=TRUE
+        break
+      }
+    }
+    if(renamed){
+      assign(df_name,df,envir=envir)
+    }
+  }
+  #If no data frame had a column renamed, create "Pay Period Start Date" column in payroll df(s)
+  if(!renamed_any){
+    for(df_name in df_list){
+      #Detect payroll OR pay_date in ANY position of df_name
+      is_payroll_related=grepl("payroll",df_name,ignore.case=TRUE)||grepl("pay[ _-]*date",df_name,ignore.case=TRUE)
+      if(is_payroll_related){
+        df=get(df_name,envir=envir)
+        match=regexec("df_(\\\\d{4})_(\\\\d{2})",df_name)
+        parts=regmatches(df_name,match)[[1]]
+        if("Pay Date" %in% colnames(df)){
+          #Case 1: If it has a "Pay Date" column, use that - 21
+          df$`Pay Period Start Date`=as.Date(df$`Pay Date`)-21
+          assign(df_name,df)
+        } else if(length(parts)==3){
+          #Case 2: If the df_name encodes year/month like "df_2025_03_payroll"
+          year=as.integer(parts[2])
+          month_num=as.integer(parts[3])
+          #First and last day of the month
+          first_day=as.Date(sprintf("%04d-%02d-01",year,month_num))
+          last_day=seq(first_day,length=2,by="1 month")[2]-1
+          #Use consistent logic: 21 days before last day of month
+          df$`Pay Period Start Date`=last_day-21
+          assign(df_name,df,envir=envir)
+        } else{
+          warning(paste("Could not extract year/month or Pay Date from",df_name))
+        }
+      }
+    }
+  }
+  message("Pay Period Start Date column renamed.")
+  #Loop through each data frame
+  for(df_name in df_list){
+    #Get the data frame
+    df=get(df_name,envir=envir)
+    #Define a broad pattern to capture possible variants
+    pattern="(?i)(?:total[ _.-]*)?hours(?:[ _.-]*worked)?|gross[ _.-]*hours|working[ _.-]*hours"
+    #Find all matching columns
+    matching_cols=grep(pattern,colnames(df),ignore.case=TRUE,value=TRUE,perl=TRUE)
+    if(length(matching_cols)>0){
+      #Prioritize explicit "gross hours" or "total hours worked" first
+      preferred_pattern="(?i)gross[ _.-]*hours|total[ _.-]*hours(?:[ _.-]*worked)?"
+      preferred_match=grep(preferred_pattern,matching_cols,ignore.case=TRUE,value=TRUE,perl=TRUE)
+      #Choose the first preferred match if it exists, else the first general match
+      chosen_col=if(length(preferred_match)>0) preferred_match[1] else matching_cols[1]
+      #Rename that single column
+      colnames(df)[colnames(df)==chosen_col]="Total Hours Worked"
+    }
+    #Save back to environment
+    assign(df_name,df,envir=envir)
+  }
+  message("Total Hours Worked column renamed.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Columns ending with separator + "amount"
+    amount_cols=grep("(?i)[ _\\\\.-]amount$",colnames(df),perl=TRUE,value=TRUE)
+    if(length(amount_cols)>0){
+      #Convert to numeric (remove commas)
+      df[,amount_cols]=lapply(df[,amount_cols,drop=FALSE],function(x){
+        as.numeric(gsub(",","",x))
+      })
+    } else{
+      #Columns containing "sit" + separator + "18"
+      sit18_pattern="(?i)sit[ _\\\\.]+18"
+      sit18_cols=grep(sit18_pattern,colnames(df),perl=TRUE,value=TRUE)
+      if(length(sit18_cols)>0){
+        #Rename all matched columns to "Work State SIT"
+        for(col in sit18_cols){
+          colnames(df)[colnames(df)==col]="Work State SIT"
+        }
+      } else{
+        #Fallback: flexible "worked in state employee tax" with separators
+        tax_pattern="(?i)^worked[ _\\\\.-]+in[ _\\\\.-]+state[ _\\\\.-]+employee[ _\\\\.-]+tax$"
+        tax_col_idx=grep(tax_pattern,colnames(df),perl=TRUE)
+        if(length(tax_col_idx)==1){
+          colnames(df)[tax_col_idx]="Work State SIT"
+        }
+      }
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Work State SIT column renamed.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Regex pattern to match columns containing "state 2 wages" with separators (space, underscore, or period)
+    pattern="(?i)state[ _\\\\.]+2.*wages"
+    #Find matching columns
+    matching_cols=grep(pattern,colnames(df),perl=TRUE,value=TRUE)
+    if(length(matching_cols)>0){
+      for(col in matching_cols){
+        colnames(df)[colnames(df)==col]="Resident State Wages"
+      }
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Resident State Wages column renamed.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Pattern to match "sit" + separator + "21" anywhere in the column name
+    sit21_pattern="(?i)sit[ _\\\\.]+21"
+    sit21_cols=grep(sit21_pattern,colnames(df),perl=TRUE,value=TRUE)
+    if(length(sit21_cols)>0){
+      for(col in sit21_cols){
+        colnames(df)[colnames(df)==col]="Resident State SIT"
+      }
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Resident State SIT column renamed.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Find columns ending with separator + "wages"
+    wages_cols_all=grep("(?i)[ _\\\\.-]wages$",colnames(df),perl=TRUE,value=TRUE)
+    #Exclude gross wages and "state 2"
+    state_2_pattern="(?i)state[ _\\\\.]+2"
+    wages_cols=wages_cols_all[!grepl("gross",wages_cols_all,ignore.case=TRUE) & 
+                              !grepl(state_2_pattern,wages_cols_all,perl=TRUE)]
+    if(length(wages_cols)>0){
+      #Clean numeric values
+      df[,wages_cols]=lapply(df[,wages_cols,drop=FALSE],function(x){
+        as.numeric(gsub("[,$]","",x))
+      })
+      #Create columns only if they don\'t already exist
+      if(!"Work State Wages" %in% colnames(df)){
+        df$`Work State Wages`=0
+      }
+      if(!"Resident State Wages" %in% colnames(df)){
+        df$`Resident State Wages`=0
+      }
+      wage_matrix=as.matrix(df[,wages_cols,drop=FALSE])
+      for(i in seq_len(nrow(df))){
+        row_vals=wage_matrix[i,]
+        non_zero=row_vals[row_vals!=0 & !is.na(row_vals)]
+        if(length(non_zero)==0) next
+        ordered_vals=sort(non_zero,decreasing=TRUE)
+        #Highest → Work State Wages
+        df$`Work State Wages`[i]=ordered_vals[1]
+        #Second highest → Resident State Wages (if exists)
+        if(length(ordered_vals)>1){
+          df$`Resident State Wages`[i]=ordered_vals[2]
+        }
+      }
+    }
+    assign(df_name,df,envir=envir)
+  }
+  if(!"Work State Wages" %in% colnames(df)){
+    df=get(df_name,envir=envir)
+    total_earnings_pattern="(?i)^total[ _\\\\.-]*earnings$"
+    total_earnings_idx=grep(total_earnings_pattern,colnames(df),perl=TRUE)
+    if(length(total_earnings_idx)>0){
+      colnames(df)[total_earnings_idx[1]]="Work State Wages"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  state_lookup=c(AL="Alabama",AK="Alaska",AZ="Arizona",AR="Arkansas",CA="California",CO="Colorado",CT="Connecticut",
+                  DE="Delaware",FL="Florida",GA="Georgia",HI="Hawaii",ID="Idaho",IL="Illinois",IN="Indiana",IA="Iowa",
+                  KS="Kansas",KY="Kentucky",LA="Louisiana",ME="Maine",MD="Maryland",MA="Massachusetts",MI="Michigan",
+                  MN="Minnesota",MS="Mississippi",MO="Missouri",MT="Montana",NE="Nebraska",NV="Nevada",NH="New Hampshire",
+                  NJ="New Jersey",NM="New Mexico",NY="New York",NC="North Carolina",ND="North Dakota",OH="Ohio",
+                  OK="Oklahoma",OR="Oregon",PA="Pennsylvania",RI="Rhode Island",SC="South Carolina",SD="South Dakota",
+                  TN="Tennessee",TX="Texas",UT="Utah",VT="Vermont",VA="Virginia",WA="Washington",WV="West Virginia",
+                  WI="Wisconsin",WY="Wyoming")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    if(grepl("pay[ _\\\\.-]?date|payroll",df_name,ignore.case=TRUE)){
+      #Ensure columns exist
+      needed_cols=c("Work State SIT","Resident State SIT","Work State Wages","Resident State Wages")
+      for(col in needed_cols){
+        if(!(col %in% colnames(df))){
+          df[[col]]=0
+        }
+      }
+      #SIT Columns
+      sit_cols=grep("(?i)([ _\\\\.-]amount$|w_h)",colnames(df),perl=TRUE,value=TRUE)
+      sit_cols=sit_cols[!grepl("(?i)^wg",sit_cols,perl=TRUE)]
+      if(length(sit_cols)>0){
+        #Clean numeric values
+        df[,sit_cols]=lapply(df[,sit_cols,drop=FALSE],function(x){
+          as.numeric(gsub("[,$]","",x))
+        })
+        #Initialize columns
+        df$`Work State SIT`=0
+        df$`Resident State SIT`=0
+        sit_matrix=as.matrix(df[,sit_cols,drop=FALSE])
+        for(i in seq_len(nrow(df))){
+          row_vals=sit_matrix[i,]
+          non_zero=row_vals[row_vals!=0 & !is.na(row_vals)]
+          if(length(non_zero)==0) next
+          ordered_vals=sort(non_zero,decreasing=TRUE)
+          df$`Work State SIT`[i]=ordered_vals[1]
+          if(length(ordered_vals)>1){
+            df$`Resident State SIT`[i]=ordered_vals[2]
+          }
+        }
+      }
+      #Wage Columns
+      wg_cols=grep("(?i)^wg",colnames(df),perl=TRUE,value=TRUE)
+      if(length(wg_cols)>0){
+        #Clean numeric values
+        df[,wg_cols]=lapply(df[,wg_cols,drop=FALSE],function(x){
+          as.numeric(gsub("[,$]","",x))
+        })
+        #Ensure columns exist
+        needed_cols=c("Work State Wages","Resident State Wages","Work State","Resident State")
+        for(col in needed_cols){
+          if(!(col %in% colnames(df))){
+            df[[col]]=NA
+          }
+        }
+        wg_matrix=as.matrix(df[,wg_cols,drop=FALSE])
+        for(i in seq_len(nrow(df))){
+          row_vals=wg_matrix[i,]
+          non_zero_idx=which(row_vals!=0 & !is.na(row_vals))
+          if(length(non_zero_idx)==0) next
+          ordered_idx=non_zero_idx[order(row_vals[non_zero_idx],decreasing=TRUE)]
+          #Work State Wages
+          df$`Work State Wages`[i]=row_vals[ordered_idx[1]]
+          #Function to extract state name from wg column
+          get_state_name=function(col_name){
+            state_part=sub("(?i)^wg[_\\\\.-]*","",col_name,perl=TRUE)
+            state_part=gsub("[_\\\\.-]"," ",state_part)
+            state_part=trimws(state_part)
+            state_key=toupper(gsub(" ","",state_part))
+            if(state_key %in% names(state_lookup)){
+              return(state_lookup[state_key])
+            } else {
+              return(tools::toTitleCase(tolower(state_part)))
+            }
+          }
+          #Work State
+          df$`Work State`[i]=get_state_name(wg_cols[ordered_idx[1]])
+          #Resident State if second column exists
+          if(length(ordered_idx)>1){
+            df$`Resident State Wages`[i]=row_vals[ordered_idx[2]]
+            df$`Resident State`[i]=get_state_name(wg_cols[ordered_idx[2]])
+          }
+        }
+      }
+      assign(df_name,df,envir=envir)
+    }
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    state_names=state_lookup
+    state_abbr=names(state_lookup)
+    clean_state_name=function(x){
+      if(is.na(x)) return(NA)
+      #If value is purely numeric, leave it alone
+      if(grepl("^[0-9]+$",as.character(x))) return(x)
+      x_upper=toupper(as.character(x))
+      #Check full state names
+      for(state in state_names){
+        if(grepl(toupper(state),x_upper,fixed=TRUE)){
+          return(state)
+        }
+      }
+      #Check abbreviations
+      for(abbr in state_abbr){
+        if(grepl(paste0("\\\\b",abbr,"\\\\b"),x_upper)){
+          return(state_lookup[abbr])
+        }
+      }
+      return(NA)
+    }
+    if("Work State" %in% colnames(df)){
+      df$`Work State`=sapply(df$`Work State`,clean_state_name)
+    }
+    if("Resident State" %in% colnames(df)){
+      df$`Resident State`=sapply(df$`Resident State`,clean_state_name)
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    if(all(c("Work State Wages","Work State SIT") %in% colnames(df))){
+      cols=colnames(df)
+      #Remove "Work State Wages" from its current position
+      cols=cols[cols!="Work State Wages"]
+      #Find position of "Work State SIT"
+      sit_pos=which(cols=="Work State SIT")
+      #Insert "Work State Wages" right before "Work State SIT"
+      new_order=append(cols,"Work State Wages",after=sit_pos-1)
+      df=df[,new_order,drop=FALSE]
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Identify columns that are completely NA
+    all_na_cols=sapply(df,function(col) all(is.na(col)))
+    #Exclude Termination Date and Rehire Date from removal
+    cols_to_remove=setdiff(names(all_na_cols[all_na_cols]),c("Termination Date","Rehire Date","Resident State"))
+    if(length(cols_to_remove)>0){
+      df=df[,!(colnames(df) %in% cols_to_remove),drop=FALSE]
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Identify columns to remove: those with underscores or no uppercase letters
+    cols_to_remove=sapply(colnames(df),function(col){
+      has_underscore=grepl("_",col)
+      has_uppercase=grepl("[A-Z]",col)
+      return(has_underscore|!has_uppercase)
+    })
+    #Keep only columns that don\'t match those criteria
+    df=df[,!cols_to_remove,drop=FALSE]
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Remove FIRST instance of "Resident State" if duplicates exist
+    rs_idx=which(colnames(df)=="Resident State")
+    if(length(rs_idx)>1){
+      df=df[,-rs_idx[1],drop=FALSE]
+    }
+    assign(df_name,df,envir=envir)
+  }
+  message("Duplicate Resident State columns removed.")
+  #Built-in state mappings
+  state_map=setNames(state.name,state.abb)
+  state_cols=c("Work State","Resident State")
+  for(df_name in df_list){
+    #Get the data frame
+    df=get(df_name,envir=envir)
+    for(col in state_cols){
+      if(col %in% names(df)){
+        #Trim and coerce to character
+        ws_chr=trimws(as.character(df[[col]]))
+        #Check if column is numeric codes (allow NA)
+        is_all_numeric=all(is.na(ws_chr)|grepl("^[0-9]+$",ws_chr))
+        if(is_all_numeric){
+          #Numeric state code mapping
+          state_map_num=c("2"="Massachusetts","3"="Alabama","10"="Alaska","12"="North Carolina","15"="Colorado",
+                          "17"="Virginia","18"="Arkansas","20"="Minnesota","21"="Indiana","22"="Missouri","23"="Georgia",
+                          "25"="California","28"="Utah","30"="Ohio","35"="South Carolina","37"="Arizona","39"="Oregon",
+                          "41"="Montana","42"="Florida","43"="Illinois","53"="Texas","60"="Michigan")
+          #Lookup and replace
+          idx=match(ws_chr,names(state_map_num))
+          df[[col]]=ifelse(!is.na(idx),state_map_num[idx],ws_chr)
+        } else{
+          #Column contains abbreviations or full names
+          ws_upper=toupper(ws_chr) #Normalize case
+          idx=match(ws_upper,names(state_map))
+          df[[col]]=ifelse(!is.na(idx),state_map[idx],ws_chr) #Unknowns unchanged
+        }
+      }
+    }
+    #Assign updated df back to environment
+    assign(df_name,df,envir=envir)
+  }
+  message("22 replaced with Missouri.")
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Define replacements for Classification
+    full_time_values=c("Full-Time","Full Time","Full","F","FARG","FORG","FT","F - Full Time","F - Full-Time")
+    part_time_values=c("Part-Time","Part Time","Part","P","PARG","PT","INTR","P - Part Time","P - Part-Time")
+    if("Classification" %in% colnames(df)){
+      df$Classification=ifelse(df$Classification %in% full_time_values,"Full-Time",
+                        ifelse(df$Classification %in% part_time_values,"Part-Time",df$Classification))
+    }
+    if("Employee Status" %in% colnames(df)){
+      df$`Employee Status`=ifelse(df$`Employee Status` %in% active_values,"Active",
+                            ifelse(df$`Employee Status` %in% terminated_values,"Terminated",
+                            ifelse(df$`Employee Status` %in% deceased_values,"Deceased",
+                            ifelse(df$`Employee Status` %in% leave_values,"On Leave",df$`Employee Status`))))
+      df=df%>%mutate(`Employee Status`=ifelse(is.na(`Employee Status`)|`Employee Status`=="",
+                                        ifelse(is.na(`Termination Date`),"Active","Terminated"),`Employee Status`))
+    }
+    if(exists("directory",envir=envir)){
+      directory=get("directory",envir=envir)
+    } else{
+      stop("\'directory\' variable not found in the specified environment")
+    }
+    if(exists("company",envir=envir)){
+      company=get("company",envir=envir)
+    } else{
+      stop("\'company\' variable not found in the specified environment")
+    }
+    if(exists("all_sheets_jobs",envir=envir)){
+      all_sheets_jobs=get("all_sheets_jobs",envir=envir)
+    }
+    if(exists("file_path_jobs",envir=envir)){
+      file_path_jobs=get("file_path_jobs",envir=envir)
+    }
+    if(exists("all_sheets_locations",envir=envir)){
+      all_sheets_locations=get("all_sheets_locations",envir=envir)
+    }
+    if(exists("file_path_locations",envir=envir)){
+      file_path_locations=get("file_path_locations",envir=envir)
+    }
+    if(exists("all_sheets_jobs")){
+      if(company %in% all_sheets_jobs){
+        job_abbreviations=read.xlsx(file_path_jobs,sheet=company)
+        colnames(job_abbreviations)=gsub("\\\\."," ",colnames(job_abbreviations))
+        job_abbreviations$Abbreviation=toupper(job_abbreviations$Abbreviation)
+        if("Job Title" %in% colnames(df)){
+          df$`Job Title`=toupper(df$`Job Title`)
+          match_idx=match(df$`Job Title`,job_abbreviations$Abbreviation)
+          df$`Job Title`[!is.na(match_idx)]=job_abbreviations$`Full Job Title`[match_idx[!is.na(match_idx)]]
+          still_unmatched=is.na(match_idx)
+          if(any(still_unmatched)){
+            match_idx2=match(df$`Job Title`[still_unmatched],toupper(job_abbreviations$`Full Job Title`))
+            df$`Job Title`[still_unmatched][!is.na(match_idx2)]=job_abbreviations$`Full Job Title`[match_idx2[!is.na(match_idx2)]]
+            unmatched_titles=unique(df$`Job Title`[still_unmatched][is.na(match_idx2)])
+          } else{
+            unmatched_titles=character(0)
+          }
+          if(length(unmatched_titles)>0){
+            cat("The following Job Titles in",df_name,"have no matches in job_abbreviations:\n")
+            print(unmatched_titles)
+            answer=readline(prompt="Type Y when ready to retry from the top, or N to stop: ")
+            if(tolower(answer) %in% c("y","yes")){
+              next #Restarts for loop for this df_name
+            } else{
+              stop("Stopped because of unmatched job titles.")
+            }
+          }
+        }
+      }
+    } else{
+      message(paste("Sheet",company,"does not exist in job abbreviations file. Skipping job title replacement for",df_name))
+    }
+    message("Job Abbreviations changed.")
+    #Work Location Abbreviations replacement
+    if(exists("all_sheets_locations")){
+      if(company %in% all_sheets_locations){
+        work_location_abbreviations=read.xlsx(file_path_locations,sheet=company)
+        colnames(work_location_abbreviations)=gsub("\\\\."," ",colnames(work_location_abbreviations))
+        work_location_abbreviations$Abbreviation=toupper(work_location_abbreviations$Abbreviation)
+        if("Work Location" %in% colnames(df)){
+          df$`Work Location`=toupper(df$`Work Location`)
+          match_idx=match(df$`Work Location`,work_location_abbreviations$Abbreviation)
+          df$`Work Location`[!is.na(match_idx)]=work_location_abbreviations$`Work Location`[match_idx[!is.na(match_idx)]]
+        }
+      }
+    } else{
+      message(paste("Sheet",company,"does not exist in work location abbreviations file. Skipping work location replacement for", df_name))
+    }
+    #Proper-case First Name and Last Name (after spaces and hyphens)
+    proper_case=function(x){
+      sapply(x,function(val){
+        if(is.na(val)) return(NA_character_)
+        parts=unlist(strsplit(tolower(val),"([ -])",perl=TRUE))
+        seps=regmatches(tolower(val),gregexpr("([ -])",tolower(val),perl=TRUE))[[1]]
+        parts=paste0(toupper(substr(parts,1,1)),substr(parts,2,nchar(parts)))
+        paste(rbind(parts,c(seps,"")),collapse="")
+      },USE.NAMES=FALSE)
+    }
+    if("First Name" %in% colnames(df)){
+      df$`First Name`=proper_case(df$`First Name`)
+    }
+    if("Last Name" %in% colnames(df)){
+      df$`Last Name`=proper_case(df$`Last Name`)
+    }
+    #Assign back to environment
+    assign(df_name,df,envir=envir)
   }
 }
 column_renaming_assets=function(df_list){
@@ -556,1127 +1977,6 @@ column_renaming_assets=function(df_list){
     #Balance Sheet Account
     idx_ac=grep("bal[\\\\s._]*sh[\\\\s._]*acct[\\\\s._]*apc",colnames(df),ignore.case=TRUE)
     if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Balance Sheet Account"
-    assign(df_name,df,envir=envir)
-  }
-}
-column_renaming_payroll=function(df_list){
-  envir=parent.frame()
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    found_employee_id=FALSE
-    #Look for Employee ID variants
-    for(col_name in colnames(df)){
-      if(grepl("employee",col_name,ignore.case=TRUE)){
-        values=as.character(df[[col_name]])
-        non_na_values=values[!is.na(values)]
-        if(length(non_na_values)>0 && all(grepl("^[A-Za-z0-9]+$",non_na_values))){
-          colnames(df)[which(colnames(df)==col_name)]="Employee ID"
-          df[["Employee ID"]]=as.character(df[["Employee ID"]])
-          found_employee_id=TRUE
-          break
-        }
-      }
-    }
-    #If no Employee ID found, look for Workday ID with flexible separator and rename to Employee ID
-    if(!found_employee_id){
-      for(col_name in colnames(df)){
-        col_trim=trimws(col_name)
-        if(grepl("^workday[ ._]*id$",col_trim,ignore.case=TRUE)){
-          message("Matched Workday ID column: ",col_name," in ",df_name," - Renaming to Employee ID")
-          colnames(df)[which(colnames(df)==col_name)]="Employee ID"
-          df[["Employee ID"]]=as.character(df[["Employee ID"]])
-          found_employee_id=TRUE
-          break
-        }
-      }
-    }
-    #Remove rows with NA in Employee ID if column exists
-    if("Employee ID" %in% colnames(df)){
-      df=df[!is.na(df[["Employee ID"]]),]
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Employee ID column renamed.")
-  #Loop through each data frame
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    full_name_col=grep("^employee$|employee[ _\\\\.]*name$|^worker$|worker[ _\\\\.]*name$|full[ _\\\\.]*name",
-                        colnames(df),ignore.case=TRUE)
-    if(length(full_name_col)==1){
-      full_names=as.character(df[[full_name_col]])
-      df$`First Name`=sapply(full_names,function(x){
-        x=trimws(x)
-        if(grepl(",",x)){
-          strsplit(x,",\\\\s*")[[1]][2] %||% NA #After comma
-        } else{
-          strsplit(x,"\\\\s+")[[1]][1] #First word
-        }
-      })
-      df$`Last Name`=sapply(full_names,function(x){
-        x=trimws(x)
-        if(grepl(",",x)){
-          strsplit(x,",\\\\s*")[[1]][1] #Before comma
-        } else{
-          parts=strsplit(x,"\\\\s+")[[1]]
-          if(length(parts)>1) paste(parts[-1],collapse=" ") else NA
-        }
-      })
-      df=df[,-full_name_col,drop=FALSE]
-    }
-    #Separate first/last name columns
-    first_name_col=grep("employee[ _\\\\.]*first|worker[ _\\\\.]*first",colnames(df),ignore.case=TRUE)
-    last_name_col=grep("employee[ _\\\\.]*last|worker[ _\\\\.]*last",colnames(df),ignore.case=TRUE)
-    if(length(first_name_col)==1) colnames(df)[first_name_col]="First Name"
-    if(length(last_name_col)==1) colnames(df)[last_name_col]="Last Name"
-    #Columns already named like "First Name"/"Last Name"
-    existing_last=grep("last[ _\\\\.]*name",colnames(df),ignore.case=TRUE)
-    existing_first=grep("first[ _\\\\.]*name",colnames(df),ignore.case=TRUE)
-    if(length(existing_last)==1) colnames(df)[existing_last]="Last Name"
-    if(length(existing_first)==1) colnames(df)[existing_first]="First Name"
-    #Remove parentheses and contents in First/Last Name
-    if("First Name" %in% colnames(df)){
-      df$`First Name`=gsub("\\\\s*\\\\([^)]*\\\\)","",df$`First Name`)
-    }
-    if("Last Name" %in% colnames(df)){
-      df$`Last Name`=gsub("\\\\s*\\\\([^)]*\\\\)","",df$`Last Name`)
-    }
-    #Save updated data frame
-    assign(df_name,df,envir=envir)
-  }
-  message("First Name and Last Name columns renamed.")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Find column named "company" ignoring case
-    idx=grep("^company$",colnames(df),ignore.case=TRUE)
-    if(length(idx)==1){
-      colnames(df)[idx]="Company"
-      #Standardize "USA" and "LLC" and "INC" in the Company column
-      df$Company=gsub("\\\\busa\\\\b","USA",df$Company,ignore.case=TRUE)
-      df$Company=gsub("\\\\bllc\\\\b","LLC",df$Company,ignore.case=TRUE)
-      df$Company=gsub("\\\\binc\\\\b","INC",df$Company,ignore.case=TRUE)
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Company column renamed.")
-  #Loop through each data frame in the list
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Identify columns with job/title, position/title, business title, or position name, but exclude "position id"
-    job_title_col_index=which(sapply(colnames(df),function(col_name){
-      grepl("job.*title|title.*job|position.*title|title.*position|position|business[_.\\\\s]*title|position[_.\\\\s]*name",
-            col_name,ignore.case=TRUE) && !grepl("position[ _\\\\.]*id",col_name,ignore.case=TRUE)
-    }))
-    #Rename the first matching column to "Job Title"
-    if(length(job_title_col_index)>0){
-      colnames(df)[job_title_col_index[1]]="Job Title"
-    }
-    #Remove suffix after hyphen if at least 50% match with name
-    if("Job Title" %in% colnames(df) && all(c("First Name","Last Name") %in% colnames(df))){
-      df$`Job Title`=mapply(function(title,first,last){
-        title=as.character(title)
-        full_name=paste(first,last)
-        #Split on last hyphen (if any)
-        parts=strsplit(title,"\\\\s*-\\\\s*")[[1]]
-        if(length(parts)>1){
-          main_title=paste(parts[-length(parts)],collapse=" - ")
-          suffix=parts[length(parts)]
-          #Compute similarity: proportion of characters in full_name that appear in suffix
-          match_chars=sum(unlist(strsplit(tolower(full_name),"")) %in% unlist(strsplit(tolower(suffix),"")))
-          match_ratio=match_chars/nchar(full_name)
-          if(match_ratio>=0.5){
-            title=main_title
-          }
-        }
-        trimws(title)
-      },df$`Job Title`,df$`First Name`,df$`Last Name`)
-    }
-    #Rename any "Position ID" variants to standard "Position ID"
-    pos_id_col_index=grep("position[ _\\\\.]*id",colnames(df),ignore.case=TRUE)
-    if(length(pos_id_col_index)>0){
-      colnames(df)[pos_id_col_index]="Position ID"
-    }
-    #Save the modified data frame back to the environment
-    assign(df_name,df,envir=envir)
-  }
-  message("Job Title column renamed.")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    state_cols=grep("state$",colnames(df),ignore.case=TRUE) #Only columns ending with \'state\'
-    work_state_assigned=FALSE
-    #"location state" → Work State (only if column ends with "state")
-    if(length(state_cols)>0 && !work_state_assigned){
-      location_state_col=grep("^location[ ._]*state$",colnames(df)[state_cols],ignore.case=TRUE)
-      if(length(location_state_col)==1){
-        ws_col=state_cols[location_state_col]
-        colnames(df)[ws_col]="Work State"
-        work_state_assigned=TRUE
-        state_cols=setdiff(state_cols,ws_col)
-      }
-    }
-    #If only one remaining state column → Work State
-    if(length(state_cols)==1 && !work_state_assigned){
-      colnames(df)[state_cols]="Work State"
-      work_state_assigned=TRUE
-      state_cols=integer(0)
-    }
-    #Prefer columns containing "work" (only if they end with \'state\')
-    if(length(state_cols)>1 && !work_state_assigned){
-      work_state_col=grep("work",colnames(df)[state_cols],ignore.case=TRUE)
-      #Only accept if exactly one match and that column ends with \'state\' (already ensured by state_cols)
-      if(length(work_state_col)==1){
-        ws_col=state_cols[work_state_col]
-        colnames(df)[ws_col]="Work State"
-        work_state_assigned=TRUE
-        state_cols=setdiff(state_cols,ws_col)
-      }
-    }
-    #Tax-state logic (choose best Work State if still needed)
-    if(length(state_cols)>0){
-      tax_state_cols=grep("tax",colnames(df)[state_cols],ignore.case=TRUE)
-      #tax_state_last_cols filters those tax_state_cols whose column names end with \'state\'
-      tax_state_last_cols=grep("state$",colnames(df)[state_cols][tax_state_cols],ignore.case=TRUE)
-      if(length(tax_state_last_cols)>0){
-        valid_cols=state_cols[tax_state_cols[tax_state_last_cols]]
-        if(!work_state_assigned){
-          non_na_counts=colSums(!is.na(df[,valid_cols,drop=FALSE]))
-          best_col=valid_cols[which.max(non_na_counts)]
-          colnames(df)[best_col]="Work State"
-          work_state_assigned=TRUE
-          state_cols=setdiff(state_cols,best_col)
-        }
-        #Remaining tax-state columns → Resident State (only if end with \'state\', they should)
-        for(col in state_cols){
-          if(colnames(df)[col]!="Work State"){
-            colnames(df)[col]="Resident State"
-          }
-        }
-      }
-    }
-    #Any leftover state columns → Resident State (only those ending with \'state\')
-    for(col in state_cols){
-      if(colnames(df)[col]!="Work State"){
-        colnames(df)[col]="Resident State"
-      }
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Work State and Resident State column renamed.")
-  #Check if ANY data frame already has a "Work State" column
-  has_work_state=any(sapply(df_list,function(df_name){
-    df=get(df_name,envir=envir)
-    any(colnames(df)=="Work State")
-  }))
-  #Only proceed if NO data frame has "Work State"
-  if(!has_work_state){
-    for(df_name in df_list){
-      #Only target payroll data frames (case-insensitive)
-      if(!grepl("payroll",df_name,ignore.case=TRUE)) next
-      df=get(df_name,envir=envir)
-      #Identify XX_wages columns
-      wage_cols=grep("^[A-Za-z]{2}_wages$",colnames(df),value=TRUE)
-      #Skip if no wage columns found
-      if(length(wage_cols)==0) next
-      #Initialize new columns
-      df$`Work State`=NA_character_
-      df$`Resident State`=NA_character_
-      #Extract state codes from column names
-      state_codes=toupper(sub("_wages$","",wage_cols))
-      #Matrix of wage values
-      wage_matrix=as.matrix(df[,wage_cols,drop=FALSE])
-      colnames(wage_matrix)=state_codes
-      for(i in seq_len(nrow(df))){
-        row_vals=wage_matrix[i,]
-        #States with non-zero wages
-        non_zero=row_vals[row_vals!=0 & !is.na(row_vals)]
-        if(length(non_zero)==0) next
-        #Order states by wage descending
-        ordered_states=names(sort(non_zero,decreasing=TRUE))
-        #Assign Work / Resident State
-        df$`Work State`[i]=ordered_states[1]
-        if(length(ordered_states)>1){
-          df$`Resident State`[i]=ordered_states[2]
-        }
-      }
-      #Assign updated data frame back to environment
-      assign(df_name,df,envir=envir)
-    }
-  }
-  #Built-in state mappings
-  state_map=setNames(state.name,state.abb)
-  state_cols=c("Work State","Resident State")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    for(col in state_cols){
-      if(col %in% names(df)){
-        ws=df[[col]]
-        #Coerce once
-        ws_chr=trimws(as.character(ws))
-        #Column-wide numeric check (allow NA)
-        is_all_numeric=all(is.na(ws_chr)|grepl("^[0-9]+$",ws_chr))
-        if(is_all_numeric){
-          #Numeric state codes
-          df[[col]]=ifelse(ws_chr=="22","Missouri","Not Missouri")
-        } else{
-          #Normalize case
-          ws_upper=toupper(ws_chr)
-          #Convert abbreviations → full names
-          df[[col]]=ifelse(ws_upper %in% names(state_map),state_map[ws_upper],ws_chr) #Keep full names / unknowns unchanged
-        }
-      }
-    }
-    #Assign updated df back
-    assign(df_name,df,envir=envir)
-  }
-  message("22 replaced with Missouri.")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    location_cols=grep("location",colnames(df),ignore.case=TRUE)
-    if(length(location_cols)>0){
-      colnames(df)[location_cols]="Work Location"
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Work Location column renamed.")
-  #Loop through each data frame in the list
-  for(df_name in df_list){
-    #Get the actual data frame
-    df=get(df_name,envir=envir)
-    #Find column named exactly "city" (case-insensitive)
-    city_col=which(tolower(colnames(df))=="city")
-    #Rename if found
-    if(length(city_col)==1){
-      colnames(df)[city_col]="Resident City"
-    }
-    #Save back to environment
-    assign(df_name,df,envir=envir)
-  }
-  message("Resident City column renamed.")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    date_cols=grep("date",names(df),ignore.case=TRUE,value=TRUE)
-    if(length(date_cols)>0){
-      #Keep rows where NONE of the date columns contain any letters
-      rows_to_keep=apply(df[date_cols],1,function(row_vals){
-        all(sapply(row_vals,function(x){
-          if(is.na(x)) return(TRUE)
-          #Return TRUE if no letters in the string (case-insensitive)
-          !grepl("[a-z]",as.character(x),ignore.case=TRUE)
-        }))
-      })
-      df=df[rows_to_keep,,drop=FALSE]
-    }
-    assign(df_name,df,envir=envir)
-  }
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    cn=colnames(df)
-    cn_lower=tolower(cn)
-    sep="[ _\\\\.]"
-    #Helper
-    exact=function(pattern){
-      grep(paste0("^",pattern,"$"),cn_lower)
-    }
-    #Check for FULL explicit trio
-    hire_explicit=exact(paste0("hire",sep,"date"))
-    rehire_explicit=exact(paste0("rehire",sep,"date"))
-    term_explicit=c(exact(paste0("termination",sep,"date")),exact(paste0("term",sep,"date")))
-    has_full_trio=length(hire_explicit)==1 && length(rehire_explicit)==1 && length(term_explicit)>=1
-    #Use explicit trio ONLY
-    if(has_full_trio){
-      colnames(df)[hire_explicit]="Hire Date"
-      df$`Hire Date`=convert_to_date(df[[hire_explicit]])
-      colnames(df)[rehire_explicit]="Rehire Date"
-      df$`Rehire Date`=convert_to_date(df[[rehire_explicit]])
-      term_idx=term_explicit[1]
-      colnames(df)[term_idx]="Termination Date"
-      df$`Termination Date`=convert_to_date(df[[term_idx]])
-    } else{
-      #Fallback Logic (only if trio missing)
-      #Hire Date
-      hire_idx=exact(paste0("original",sep,"hire",sep,"date"))
-      if(length(hire_idx)==0){
-        hire_idx=grep("^hire.*date$|^date.*hire$",cn_lower)
-      }
-      if(length(hire_idx)>0){
-        hire_idx=hire_idx[1]
-        colnames(df)[hire_idx]="Hire Date"
-        df$`Hire Date`=convert_to_date(df[[hire_idx]])
-      }
-      #Rehire Date
-      rehire_idx=grep("continuous.*service.*date",cn_lower)
-      if(length(rehire_idx)==0){
-        rehire_idx=grep("^rehire.*date$|^date.*rehire$",cn_lower)
-      }
-      if(length(rehire_idx)>0){
-        rehire_idx=rehire_idx[1]
-        colnames(df)[rehire_idx]="Rehire Date"
-        df$`Rehire Date`=convert_to_date(df[[rehire_idx]])
-      }
-      #Termination Date
-      term_idx=grep("^termination.*date$|^term.*date$|^date.*term$",cn_lower)
-      if(length(term_idx)>0){
-        term_idx=term_idx[1]
-        colnames(df)[term_idx]="Termination Date"
-        df$`Termination Date`=convert_to_date(df[[term_idx]])
-      }
-    }
-    #Cleanup
-    if(all(c("Hire Date","Rehire Date") %in% colnames(df))){
-      same_dates=!is.na(df$`Hire Date`) & !is.na(df$`Rehire Date`) & df$`Hire Date`==df$`Rehire Date`
-      df$`Rehire Date`[same_dates]=as.Date(NA)
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Hire Date, Rehire Date, and Termination Date columns renamed.")
-  #Define status keywords (lowercase)
-  status_keywords=c("hired","rehired","active","a","d",
-                    "terminated","fired","resigned","t","laid off","furloughed",
-                    "leave with pay","leave without pay","leave","on leave")
-  #Helper regex pattern for flexible separators: space, underscore, or period
-  sep_pattern="[ _\\\\.]"
-  active_values=c("Active","Hired","Rehired","A")
-  terminated_values=c("Terminated","Fired","Resigned","T")
-  deceased_values=c("D","Deceased")
-  leave_values=c("L","Leave with Pay","Leave without Pay","Leave","On Leave")
-  for(df_name in df_list){
-    #Only proceed if df_name contains "Census" or "Pay Date"
-    if(!grepl("census|pay_date",df_name,ignore.case=TRUE)){
-      next
-    }
-    df=get(df_name,envir=envir)
-    #Pattern: "employee" + separator + "status"
-    status_col_indices=which(grepl("employee[ _.-]+status",colnames(df),ignore.case=TRUE))
-    #Fallback: exact literal
-    if(length(status_col_indices)==0){
-      status_col_indices=which(tolower(colnames(df))=="employee_status")
-    }
-    #Fallback: columns where all values are in status lists
-    if(length(status_col_indices)==0){
-      all_status_values=c(active_values,terminated_values,deceased_values,leave_values)
-      status_col_indices=which(sapply(df, function(col){
-        if(is.character(col)||is.factor(col)){
-          vals=na.omit(as.character(col))
-          length(vals)>0 && all(vals %in% all_status_values)
-        } else FALSE
-      }))
-    }
-    #Rename columns that match status keywords
-    found_employee_status=FALSE
-    if(length(status_col_indices)>0){
-      all_status_values_lower=tolower(c(active_values,terminated_values,deceased_values,leave_values))
-      for(col_index in status_col_indices){
-        status_col=df[[col_index]]
-        status_col_clean=status_col[!is.na(status_col)]
-        status_col_clean_lower=tolower(as.character(status_col_clean))
-        if(length(status_col_clean)>0 && all(status_col_clean_lower %in% all_status_values_lower)){
-          colnames(df)[col_index]="Employee Status"
-          found_employee_status=TRUE
-          break
-        }
-      }
-    }
-    #If no "Employee Status" found, try to find an "active status" column
-    if(!found_employee_status){
-      active_status_pattern=paste0("^active",sep_pattern,"*status$")
-      active_idx=grep(active_status_pattern,colnames(df),ignore.case=TRUE)
-      if(length(active_idx)==1){
-        #Rename to Employee Status
-        colnames(df)[active_idx]="Employee Status"
-        df[["Employee Status"]]=as.character(df[["Employee Status"]])
-        #Check for "on leave" column first and mark those rows "On Leave" ONLY IF Termination Date IS NA
-        on_leave_pattern=paste0("^on",sep_pattern,"*leave$")
-        on_leave_idx=grep(on_leave_pattern,colnames(df),ignore.case=TRUE)
-        if(length(on_leave_idx)==1){
-          on_leave_col=as.character(df[[on_leave_idx]])
-          yes_leave_idx=which(tolower(on_leave_col)=="yes")
-          if(length(yes_leave_idx)>0){
-            if("Termination Date" %in% colnames(df)){
-              if(!inherits(df[["Termination Date"]],"Date")){
-                df[["Termination Date"]]=as.Date(df[["Termination Date"]],tryFormats=c("%Y-%m-%d","%m/%d/%Y","%d-%b-%Y"))
-              }
-              no_term_idx=yes_leave_idx[is.na(df[["Termination Date"]][yes_leave_idx])]
-              if(length(no_term_idx)>0){
-                df[["Employee Status"]][no_term_idx]="On Leave"
-              }
-            } else {
-              df[["Employee Status"]][yes_leave_idx]="On Leave"
-            }
-          }
-        }
-        #Replace "Yes" with "Active" in Employee Status (except those already "On Leave")
-        yes_idx=which(tolower(df[["Employee Status"]])=="yes")
-        if(length(yes_idx)>0){
-          df[["Employee Status"]][yes_idx]="Active"
-        }
-        found_employee_status=TRUE
-      }
-    }
-    #Convert Termination Date to Date if exists
-    if("Termination Date" %in% colnames(df)){
-      if(!inherits(df[["Termination Date"]],"Date")){
-        df[["Termination Date"]]=as.Date(df[["Termination Date"]],tryFormats=c("%Y-%m-%d","%m/%d/%Y","%d-%b-%Y"))
-      }
-      #For any row with non-NA Termination Date, override/set Employee Status to "Terminated"
-      term_idx=which(!is.na(df[["Termination Date"]]))
-      if(length(term_idx)>0){
-        if(!("Employee Status" %in% colnames(df))){
-          df[["Employee Status"]]=NA_character_
-        }
-        #Default: mark terminated
-        df[["Employee Status"]][term_idx]="Terminated"
-        #Override: rehired AFTER termination => Active
-        if("Rehire Date" %in% colnames(df)){
-          if(!inherits(df[["Rehire Date"]],"Date")){
-            df[["Rehire Date"]]=as.Date(df[["Rehire Date"]],tryFormats=c("%Y-%m-%d","%m/%d/%Y","%d-%b-%Y"))
-          }
-          rehire_after_term_idx=term_idx[!is.na(df[["Rehire Date"]][term_idx]) &
-                                          df[["Rehire Date"]][term_idx]>df[["Termination Date"]][term_idx]]
-          if(length(rehire_after_term_idx)>0){
-            df[["Employee Status"]][rehire_after_term_idx]="Active"
-          }
-        }
-      }
-    }
-    #Fill any remaining NA or empty Employee Status with "Unknown"
-    if("Employee Status" %in% colnames(df)){
-      na_status_idx=which(is.na(df[["Employee Status"]])|df[["Employee Status"]]=="")
-      if(length(na_status_idx)>0){
-        df[["Employee Status"]][na_status_idx]="Unknown"
-      }
-    } else{
-      df[["Employee Status"]]="Unknown"
-    }
-    #Save modified data frame back to environment
-    assign(df_name,df,envir=envir)
-  }
-  message("Employee Status column renamed.")
-  #Define the valid values for the Classification column (all lowercase)
-  valid_values=tolower(c("Full-Time","Full Time","Full","F","FARG","FORG","FT",
-                          "Part-Time","Part Time","Part","P","PARG","PT","INTR"))
-  #Define the threshold for "overwhelming majority" (e.g., 90%)
-  majority_threshold=0.9
-  #Loop through each data frame in the list
-  for(df_name in df_list){
-    #Get the actual data frame
-    df=get(df_name,envir=envir)
-    #Loop through each column in the data frame
-    for(col_name in colnames(df)){
-      #Convert the column to lowercase for comparison
-      col_lower=tolower(as.character(df[[col_name]]))
-      logical_vec=col_lower %in% valid_values
-      if(length(logical_vec)>0){
-        valid_proportion=mean(logical_vec,na.rm=TRUE)
-        if(!is.na(valid_proportion) && valid_proportion>=majority_threshold){
-          colnames(df)[colnames(df)==col_name]="Classification"
-          break
-        }
-      }
-    }
-    #Save the modified data frame back to the environment
-    assign(df_name,df,envir=envir)
-  }
-  message("Classification column renamed.")
-  #Define the valid values for the Wage Type column
-  valid_values_wage=c("Salaried","Salary","Salary Exempt","Salary Non Exempt","Salary Non-Exempt","S",
-                      "Hourly","Hourly Non-Exempt","Hourly Non Exempt","Hourly Exempt","Hour","H")
-  #Convert valid values to lowercase once
-  valid_values_wage_lower=tolower(valid_values_wage)
-  #Loop through each data frame in the list
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    found=FALSE
-    #First pass: look for a column whose values (case-insensitive) are all in the valid list
-    for(col_name in colnames(df)){
-      non_na_values=df[[col_name]][!is.na(df[[col_name]])]
-      if(length(non_na_values)>0 && all(tolower(non_na_values) %in% valid_values_wage_lower)){
-        colnames(df)[colnames(df)==col_name]="Wage Type"
-        found=TRUE
-        break
-      }
-    }
-    #Second pass (fallback)
-    if(!found){
-      #Try to find a column with both "wage" and "type"
-      wage_type_cols=grep("wage",colnames(df),ignore.case=TRUE,value=TRUE)
-      wage_type_cols=wage_type_cols[grepl("type",wage_type_cols,ignore.case=TRUE)]
-      if(length(wage_type_cols)>0){
-        #Rename first "wage-type" column found
-        colnames(df)[colnames(df)==wage_type_cols[1]]="Wage Type"
-      } else{
-        #If none found, try to find "pay rate type"
-        pay_rate_type_cols=grep("pay[ _\\\\.]*rate[ _\\\\.]*type",colnames(df),ignore.case=TRUE,value=TRUE)
-        if(length(pay_rate_type_cols)>0){
-          #Rename first "pay rate type" column found
-          colnames(df)[colnames(df)==pay_rate_type_cols[1]]="Wage Type"
-        }
-      }
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Wage Type column renamed.")
-  #Define reference sets
-  salaried_values=c("Salaried","Salary","Salary Exempt","Salary Non Exempt","Salary Non-Exempt","S")
-  hourly_values=c("Hourly","Hourly Non-Exempt","Hourly Non Exempt","Hourly Exempt","Hour","H")
-  #Match "pay rate" variations or any column that contains "rate" as a whole word or suffix
-  pattern="(?i)pay[ _-]*rate|(^|[^a-zA-Z])rate([^a-zA-Z]|$)"
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Find all matches to pattern
-    col_match=grep(pattern,colnames(df),perl=TRUE)
-    if(length(col_match)>0){
-      #Rename the first match to "Pay Rate"
-      colnames(df)[col_match[1]]="Pay Rate"  
-    } else{
-      #If no Pay Rate, search for salary column
-      salary_match=grep("(?i)salary",colnames(df),perl=TRUE)
-      if(length(salary_match)>0){
-        colnames(df)[salary_match[1]]="Pay Rate"
-      }
-    }
-    #Ensure "Pay Rate" exists and "Wage Type" exists for adjustment
-    if("Pay Rate" %in% colnames(df)){
-      #Remove commas and any $ signs, then convert to numeric
-      df$`Pay Rate`=as.numeric(gsub("[\\\\$,]","",as.character(df$`Pay Rate`))) 
-      #Adjust based on Wage Type if column exists
-      if("Wage Type" %in% colnames(df)){
-        df$`Pay Rate`=ifelse(df$`Wage Type` %in% salaried_values,df$`Pay Rate`/26,
-                            ifelse(df$`Wage Type` %in% hourly_values,
-                                    df$`Pay Rate`/2080,df$`Pay Rate`)) #leave unchanged if type not recognized
-      }
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Pay Rate column renamed.")
-  date_cols=c("Hire Date","Rehire Date","Termination Date")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    for(col in intersect(date_cols,names(df))){
-      df[[col]]=convert_to_date(df[[col]])
-    }
-    assign(df_name,df,envir=envir)
-  }
-  #Check if both "payroll" and "census" data frames are in df_list
-  has_payroll=any(grepl("payroll",df_list,ignore.case=TRUE))
-  has_census=any(grepl("census",df_list,ignore.case=TRUE))
-  #Vectors to track Pay Date column status
-  created_pay_date=c()
-  renamed_pay_date=c()
-  #Loop through each data frame
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    date_cols=grep("^(pay|check)[._ ]?date$",colnames(df),ignore.case=TRUE,value=TRUE)
-    if(length(date_cols)>0){
-      #Rename matched columns to "Pay Date"
-      colnames(df)[colnames(df) %in% date_cols]="Pay Date"
-      renamed_pay_date=c(renamed_pay_date,df_name)
-    } else if(grepl("payroll",df_name,ignore.case=TRUE)){
-      #Extract YYYY_MM from df_name like "df_2025_03"
-      matches=regmatches(df_name,regexec("^df_(\\\\d{4})_(\\\\d{2})",df_name))
-      if(length(matches[[1]])>=3){
-        year=as.integer(matches[[1]][2])
-        month_num=as.integer(matches[[1]][3])
-        #Last day of month
-        last_day=as.Date(paste(year,month_num,"01",sep="-")) %m+% months(1)-days(1)
-        #Last Friday of the month
-        weekday_last=as.POSIXlt(last_day)$wday #Sunday = 0
-        offset=(weekday_last-5) %% 7 #Friday = 5
-        last_friday=last_day-offset
-        df$`Pay Date`=convert_to_date(last_friday)
-        created_pay_date=c(created_pay_date,df_name)
-      } else{
-        warning(paste("Unable to extract year/month from df_name:",df_name))
-      }
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Pay Date column renamed.")
-  month_label=if(exists("month",envir=envir)) get("month",envir=envir) else NULL
-  quarter_label=if(exists("quarter",envir=envir)) get("quarter",envir=envir) else NULL
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Skip if df is not actually a dataframe
-    if(!is.data.frame(df)) next
-    if("Pay Date" %in% colnames(df)){
-      df$`Pay Date`=as.Date(df$`Pay Date`)
-      if(!is.null(month_label)){
-        #Defensive: force month_label to character if needed
-        month_label=as.character(month_label)
-        if(is.numeric(month_label)){
-          month_label=month.name[as.integer(month_label)]
-        }
-        month_label=tools::toTitleCase(tolower(month_label))
-        df=df[tools::toTitleCase(tolower(format(df$`Pay Date`,"%B")))==month_label,]
-      } else if(!is.null(quarter_label)){
-        quarter_months_list=list(c("January","February","March"),c("April","May","June"),
-                                  c("July","August","September"),c("October","November","December")
-        )
-        quarter_label=as.integer(quarter_label) #Defensive
-        months_in_quarter=quarter_months_list[[quarter_label]]
-        df=df[format(df$`Pay Date`,"%B") %in% months_in_quarter,]
-      }
-      assign(df_name,df,envir=envir)
-    }
-  }
-  month=month_label
-  quarter=quarter_label
-  message("I love titties.")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Skip if df is not a dataframe
-    if(!is.data.frame(df)) next
-    pattern="(?i)^gross([ _-]*(pay|wages)|(_[a-z0-9]{0,10})?)$"
-    matching_cols=grep(pattern,colnames(df),value=TRUE,perl=TRUE)
-    if(length(matching_cols)>0){
-      colnames(df)[colnames(df) %in% matching_cols]="Gross Wages"
-      assign(df_name,df,envir=envir)
-    }
-  }
-  message("Gross Wages column renamed.")
-  #Flag to track if the column already exists in any data frame
-  days_column_found=FALSE
-  #First check if any df already has a suitable "Days in Pay Period" column
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    days_col=grep("days[._ ]*in[._ ]*pay[._ ]*period",colnames(df),ignore.case=TRUE,value=TRUE)
-    if(length(days_col)==1){
-      colnames(df)[colnames(df) %in% days_col]="Days in Pay Period"
-      assign(df_name,df,envir=envir)
-      days_column_found=TRUE
-    }
-  }
-  message("Days in Pay Period column renamed.")
-  #If none were found, create it in payroll data frames only
-  if(!days_column_found){
-    for(df_name in df_list){
-      if(grepl("payroll|pay[._ ]?date",df_name,ignore.case=TRUE)){
-        df=get(df_name,envir=envir)
-        #Check if file name has YYYY_MM or YYYY_QX
-        match_month=regexec("(\\\\d{4})_(\\\\d{2})",df_name)
-        parts_month=regmatches(df_name,match_month)[[1]]
-        match_quarter=regexec("(\\\\d{4})_q(\\\\d)",tolower(df_name))
-        parts_quarter=regmatches(df_name,match_quarter)[[1]]
-        if(length(parts_month)==3){
-          #Case 1: Monthly file (df_YYYY_MM_payroll)
-          year=as.integer(parts_month[2])
-          month_num=as.integer(parts_month[3])
-          first_day=as.Date(sprintf("%04d-%02d-01",year,month_num))
-          days_in_month=as.integer(format(seq(first_day,length=2,by="1 month")[2]-1,"%d"))
-          if("Pay Date" %in% names(df)){
-            if(df_name %in% created_pay_date){
-              df$`Days in Pay Period`=days_in_month
-            } else if(df_name %in% renamed_pay_date){
-              df$`Days in Pay Period`=14
-            } else{
-              df$`Days in Pay Period`=days_in_month
-            }
-          } else{
-            df$`Days in Pay Period`=days_in_month
-          }
-        } else if(length(parts_quarter)==3){
-          #Case 2: Quarterly file (df_YYYY_QX_payroll)
-          if("Pay Date" %in% names(df)){
-            df$`Days in Pay Period`=sapply(df$`Pay Date`,function(pd){
-              if(is.na(pd)) return(NA_integer_)
-              pd=as.Date(pd)
-              first_day=as.Date(sprintf("%04d-%02d-01",year(pd),month(pd)))
-              as.integer(format(seq(first_day,length=2,by="1 month")[2]-1,"%d"))
-            })  
-            #Apply renamed vs created pay date rule
-            if(df_name %in% renamed_pay_date){
-              df$`Days in Pay Period`=14
-            }
-          } else{
-            warning(paste("Quarterly payroll file missing Pay Date column:",df_name))
-          }
-        } else{
-          warning(paste("Could not extract YYYY_MM or YYYY_QX from:",df_name))
-        }
-        assign(df_name,df,envir=envir)
-      }
-    }
-  }
-  #Loop through each data frame in the list
-  renamed_any=FALSE
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    patterns=c("pay period end date","pay period ending date","end date","ending date")
-    renamed=FALSE
-    for(pattern in patterns){
-      regex_pattern=gsub(" ","[ _-]*",pattern,fixed=TRUE)
-      matching_cols=grep(regex_pattern,colnames(df),ignore.case=TRUE,value=TRUE,perl=TRUE)
-      if(length(matching_cols)>0){
-        colnames(df)[colnames(df) %in% matching_cols]="Pay Period End Date"
-        renamed=TRUE
-        renamed_any=TRUE
-        break
-      }
-    }
-    if(renamed){
-      assign(df_name,df,envir=envir)
-    }
-  }
-  message("Pay Period End Date column renamed.")
-  #If no data frame had a column renamed, create "Pay Period End Date" column in payroll df(s)
-  if(!renamed_any){
-    for(df_name in df_list){
-      if(grepl("payroll|pay[ _.-]*date",df_name,ignore.case=TRUE)){
-        df=get(df_name,envir=envir)
-        match=regexec("df_(\\\\d{4})_(\\\\d{2})",df_name)
-        parts=regmatches(df_name,match)[[1]]
-        if("Pay Date" %in% colnames(df)){
-          #Case 1: If it has a "Pay Date" column, use that - 8
-          df$`Pay Period End Date`=as.Date(df$`Pay Date`)-8
-          assign(df_name,df,envir=envir)
-        } else if(length(parts)==3){
-          #Case 2: If the df_name encodes year/month like "df_2025_03_payroll"
-          year=as.integer(parts[2])
-          month_num=as.integer(parts[3])
-          #First and last day of the month
-          first_day=as.Date(sprintf("%04d-%02d-01",year,month_num))
-          last_day=seq(first_day,length=2,by="1 month")[2]-1
-          #Use consistent logic: 8 days before last day of month
-          df$`Pay Period End Date`=last_day-8
-          assign(df_name,df,envir=envir)
-        } else{
-          warning(paste("Could not extract year/month or Pay Date from",df_name))
-        }
-      }
-    }
-  }
-  #Loop through each data frame in the list
-  renamed_any=FALSE
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    patterns=c("pay period start date","pay period starting date",
-                "pay period begin date","pay period beginning date",
-                "start date","starting date","begin date","beginning date")
-    renamed=FALSE
-    for(pattern in patterns){
-      regex_pattern=gsub(" ","[ _-]*",pattern,fixed=TRUE)
-      matching_cols=grep(regex_pattern,colnames(df),ignore.case=TRUE,value=TRUE,perl=TRUE)
-      if(length(matching_cols)>0){
-        colnames(df)[colnames(df) %in% matching_cols]="Pay Period Start Date"
-        renamed=TRUE
-        renamed_any=TRUE
-        break
-      }
-    }
-    if(renamed){
-      assign(df_name,df,envir=envir)
-    }
-  }
-  #If no data frame had a column renamed, create "Pay Period Start Date" column in payroll df(s)
-  if(!renamed_any){
-    for(df_name in df_list){
-      #Detect payroll OR pay_date in ANY position of df_name
-      is_payroll_related=grepl("payroll",df_name,ignore.case=TRUE)||grepl("pay[ _-]*date",df_name,ignore.case=TRUE)
-      if(is_payroll_related){
-        df=get(df_name,envir=envir)
-        match=regexec("df_(\\\\d{4})_(\\\\d{2})",df_name)
-        parts=regmatches(df_name,match)[[1]]
-        if("Pay Date" %in% colnames(df)){
-          #Case 1: If it has a "Pay Date" column, use that - 21
-          df$`Pay Period Start Date`=as.Date(df$`Pay Date`)-21
-          assign(df_name,df)
-        } else if(length(parts)==3){
-          #Case 2: If the df_name encodes year/month like "df_2025_03_payroll"
-          year=as.integer(parts[2])
-          month_num=as.integer(parts[3])
-          #First and last day of the month
-          first_day=as.Date(sprintf("%04d-%02d-01",year,month_num))
-          last_day=seq(first_day,length=2,by="1 month")[2]-1
-          #Use consistent logic: 21 days before last day of month
-          df$`Pay Period Start Date`=last_day-21
-          assign(df_name,df,envir=envir)
-        } else{
-          warning(paste("Could not extract year/month or Pay Date from",df_name))
-        }
-      }
-    }
-  }
-  message("Pay Period Start Date column renamed.")
-  #Loop through each data frame
-  for(df_name in df_list){
-    #Get the data frame
-    df=get(df_name,envir=envir)
-    #Define a broad pattern to capture possible variants
-    pattern="(?i)(?:total[ _.-]*)?hours(?:[ _.-]*worked)?|gross[ _.-]*hours|working[ _.-]*hours"
-    #Find all matching columns
-    matching_cols=grep(pattern,colnames(df),ignore.case=TRUE,value=TRUE,perl=TRUE)
-    if(length(matching_cols)>0){
-      #Prioritize explicit "gross hours" or "total hours worked" first
-      preferred_pattern="(?i)gross[ _.-]*hours|total[ _.-]*hours(?:[ _.-]*worked)?"
-      preferred_match=grep(preferred_pattern,matching_cols,ignore.case=TRUE,value=TRUE,perl=TRUE)
-      #Choose the first preferred match if it exists, else the first general match
-      chosen_col=if(length(preferred_match)>0) preferred_match[1] else matching_cols[1]
-      #Rename that single column
-      colnames(df)[colnames(df)==chosen_col]="Total Hours Worked"
-    }
-    #Save back to environment
-    assign(df_name,df,envir=envir)
-  }
-  message("Total Hours Worked column renamed.")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Find columns ending with separator + "amount"
-    amount_cols=grep("(?i)[ _\\\\.-]amount$",colnames(df),perl=TRUE,value=TRUE)
-    if(length(amount_cols)>0){
-      #Sum those columns into Work State SIT
-      df[,amount_cols]=lapply(df[,amount_cols,drop=FALSE],function(x){
-        as.numeric(gsub(",","",x))
-      })
-    } else{
-      #No amount cols found, look for columns containing "sit" + separator + "18"
-      sit18_pattern="(?i)sit[ _\\\\.]+18"
-      sit18_cols=grep(sit18_pattern,colnames(df),perl=TRUE,value=TRUE)
-      if(length(sit18_cols)>0){
-        #Rename all matched columns to "Work State SIT"
-        for(col in sit18_cols){
-          colnames(df)[colnames(df)==col]="Work State SIT"
-        }
-      }
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Work State SIT column renamed.")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Regex pattern to match columns containing "state 2 wages" with separators (space, underscore, or period)
-    pattern="(?i)state[ _\\\\.]+2.*wages"
-    #Find matching columns
-    matching_cols=grep(pattern,colnames(df),perl=TRUE,value=TRUE)
-    if(length(matching_cols)>0){
-      for(col in matching_cols){
-        colnames(df)[colnames(df)==col]="Resident State Wages"
-      }
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Resident State Wages column renamed.")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Pattern to match "sit" + separator + "21" anywhere in the column name
-    sit21_pattern="(?i)sit[ _\\\\.]+21"
-    sit21_cols=grep(sit21_pattern,colnames(df),perl=TRUE,value=TRUE)
-    if(length(sit21_cols)>0){
-      for(col in sit21_cols){
-        colnames(df)[colnames(df)==col]="Resident State SIT"
-      }
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Resident State SIT column renamed.")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Find columns ending with separator + "wages"
-    wages_cols_all=grep("(?i)[ _\\\\.-]wages$",colnames(df),perl=TRUE,value=TRUE)
-    #Exclude gross wages and "state 2"
-    state_2_pattern="(?i)state[ _\\\\.]+2"
-    wages_cols=wages_cols_all[!grepl("gross",wages_cols_all,ignore.case=TRUE) & 
-                              !grepl(state_2_pattern,wages_cols_all,perl=TRUE)]
-    if(length(wages_cols)>0){
-      #Clean numeric values
-      df[,wages_cols]=lapply(df[,wages_cols,drop=FALSE],function(x){
-        as.numeric(gsub("[,$]","",x))
-      })
-      #Create columns only if they don\'t already exist
-      if(!"Work State Wages" %in% colnames(df)){
-        df$`Work State Wages`=0
-      }
-      if(!"Resident State Wages" %in% colnames(df)){
-        df$`Resident State Wages`=0
-      }
-      wage_matrix=as.matrix(df[,wages_cols,drop=FALSE])
-      for(i in seq_len(nrow(df))){
-        row_vals=wage_matrix[i,]
-        non_zero=row_vals[row_vals!=0 & !is.na(row_vals)]
-        if(length(non_zero)==0) next
-        ordered_vals=sort(non_zero,decreasing=TRUE)
-        #Highest → Work State Wages
-        df$`Work State Wages`[i]=ordered_vals[1]
-        #Second highest → Resident State Wages (if exists)
-        if(length(ordered_vals)>1){
-          df$`Resident State Wages`[i]=ordered_vals[2]
-        }
-      }
-    }
-    assign(df_name,df,envir=envir)
-  }
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Find columns ending with separator + "amount"
-    sit_cols=grep("(?i)[ _\\\\.-]amount$",colnames(df),perl=TRUE,value=TRUE)
-    if(length(sit_cols)>0){
-      #Clean numeric values
-      df[,sit_cols]=lapply(df[,sit_cols,drop=FALSE],function(x){
-        as.numeric(gsub("[,$]","",x))
-      })
-      #Initialize columns
-      df$`Work State SIT`=0
-      df$`Resident State SIT`=0
-      sit_matrix=as.matrix(df[,sit_cols,drop=FALSE])
-      for(i in seq_len(nrow(df))){
-        row_vals=sit_matrix[i,]
-        non_zero=row_vals[row_vals!=0 & !is.na(row_vals)]
-        if(length(non_zero)==0) next
-        ordered_vals=sort(non_zero,decreasing=TRUE)
-        #Highest → Work State SIT
-        df$`Work State SIT`[i]=ordered_vals[1]
-        #Second highest → Resident State SIT (if exists)
-        if(length(ordered_vals)>1){
-          df$`Resident State SIT`[i]=ordered_vals[2]
-        }
-      }
-    }
-    assign(df_name,df,envir=envir)
-  }
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    if(all(c("Work State Wages","Work State SIT") %in% colnames(df))){
-      cols=colnames(df)
-      #Remove "Work State Wages" from its current position
-      cols=cols[cols!="Work State Wages"]
-      #Find position of "Work State SIT"
-      sit_pos=which(cols=="Work State SIT")
-      #Insert "Work State Wages" right before "Work State SIT"
-      new_order=append(cols,"Work State Wages",after=sit_pos-1)
-      df=df[,new_order,drop=FALSE]
-    }
-    assign(df_name,df,envir=envir)
-  }
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Identify columns that are completely NA
-    all_na_cols=sapply(df,function(col) all(is.na(col)))
-    #Exclude Termination Date and Rehire Date from removal
-    cols_to_remove=setdiff(names(all_na_cols[all_na_cols]),c("Termination Date","Rehire Date"))
-    if(length(cols_to_remove)>0){
-      df=df[,!(colnames(df) %in% cols_to_remove),drop=FALSE]
-    }
-    assign(df_name,df,envir=envir)
-  }
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Identify columns to remove: those with underscores or no uppercase letters
-    cols_to_remove=sapply(colnames(df),function(col){
-      has_underscore=grepl("_",col)
-      has_uppercase=grepl("[A-Z]",col)
-      return(has_underscore|!has_uppercase)
-    })
-    #Keep only columns that don\'t match those criteria
-    df=df[,!cols_to_remove,drop=FALSE]
-    assign(df_name,df,envir=envir)
-  }
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Remove FIRST instance of "Resident State" if duplicates exist
-    rs_idx=which(colnames(df)=="Resident State")
-    if(length(rs_idx)>1){
-      df=df[,-rs_idx[1],drop=FALSE]
-    }
-    assign(df_name,df,envir=envir)
-  }
-  message("Duplicate Resident State columns removed.")
-  for(df_name in df_list){
-    df=get(df_name,envir=envir)
-    #Define replacements for Classification
-    full_time_values=c("Full-Time","Full Time","Full","F","FARG","FORG","FT")
-    part_time_values=c("Part-Time","Part Time","Part","P","PARG","PT","INTR")
-    if("Classification" %in% colnames(df)){
-      df$Classification=ifelse(df$Classification %in% full_time_values,"Full-Time",
-                        ifelse(df$Classification %in% part_time_values,"Part-Time",df$Classification))
-    }
-    #Define replacements for Wage Type
-    salaried_values=c("Salaried","Salary","Salary Exempt","Salary Non Exempt","Salary Non-Exempt","S")
-    hourly_values=c("Hourly","Hourly Non-Exempt","Hourly Non Exempt","Hourly Exempt","Hour","H")
-    if("Wage Type" %in% colnames(df)){
-      df=df%>%mutate(`Wage Type`=case_when(`Wage Type` %in% salaried_values~"Salaried",
-                                            `Wage Type` %in% hourly_values~"Hourly",TRUE~`Wage Type`))
-    }
-    if("Employee Status" %in% colnames(df)){
-      df$`Employee Status`=ifelse(df$`Employee Status` %in% active_values,"Active",
-                            ifelse(df$`Employee Status` %in% terminated_values,"Terminated",
-                            ifelse(df$`Employee Status` %in% deceased_values,"Deceased",
-                            ifelse(df$`Employee Status` %in% leave_values,"On Leave",df$`Employee Status`))))
-      df=df%>%mutate(`Employee Status`=ifelse(is.na(`Employee Status`)|`Employee Status`=="",
-                                        ifelse(is.na(`Termination Date`),"Active","Terminated"),`Employee Status`))
-    }
-    if(exists("directory",envir=envir)){
-      directory=get("directory",envir=envir)
-    } else{
-      stop("\'directory\' variable not found in the specified environment")
-    }
-    if(exists("company",envir=envir)){
-      company=get("company",envir=envir)
-    } else{
-      stop("\'company\' variable not found in the specified environment")
-    }
-    #Job Abbreviations replacement
-    file_path_jobs=paste0(directory,"Programs/Missouri Works/Missouri Works Job Abbreviations.xlsx")
-    all_sheets_jobs=getSheetNames(file_path_jobs)
-    if(company %in% all_sheets_jobs){
-      job_abbreviations=read.xlsx(file_path_jobs,sheet=company)
-      colnames(job_abbreviations)=gsub("\\\\."," ",colnames(job_abbreviations))
-      job_abbreviations$Abbreviation=toupper(job_abbreviations$Abbreviation)
-      if("Job Title" %in% colnames(df)){
-        df$`Job Title`=toupper(df$`Job Title`)
-        match_idx=match(df$`Job Title`,job_abbreviations$Abbreviation)
-        df$`Job Title`[!is.na(match_idx)]=job_abbreviations$`Full Job Title`[match_idx[!is.na(match_idx)]]
-        still_unmatched=is.na(match_idx)
-        if(any(still_unmatched)){
-          match_idx2=match(df$`Job Title`[still_unmatched],toupper(job_abbreviations$`Full Job Title`))
-          df$`Job Title`[still_unmatched][!is.na(match_idx2)]=job_abbreviations$`Full Job Title`[match_idx2[!is.na(match_idx2)]]
-          unmatched_titles=unique(df$`Job Title`[still_unmatched][is.na(match_idx2)])
-        } else{
-          unmatched_titles=character(0)
-        }
-        if(length(unmatched_titles)>0){
-          cat("The following Job Titles in",df_name,"have no matches in job_abbreviations:\\n")
-          print(unmatched_titles)
-          answer=readline(prompt="Type Y when ready to retry from the top, or N to stop: ")
-          if(tolower(answer) %in% c("y","yes")){
-            next #Restarts for loop for this df_name
-          } else{
-            stop("Stopped because of unmatched job titles.")
-          }
-        }
-      }
-    } else{
-      message(paste("Sheet",company,"does not exist in job abbreviations file. Skipping job title replacement for",df_name))
-    }
-    message("Job Abbreviations changed.")
-    #Work Location Abbreviations replacement
-    file_path_locations=paste0(directory,"Programs/Missouri Works/Missouri Works Work Location Abbreviations.xlsx")
-    all_sheets_locations=getSheetNames(file_path_locations)
-    if(company %in% all_sheets_locations){
-      work_location_abbreviations=read.xlsx(file_path_locations,sheet=company)
-      colnames(work_location_abbreviations)=gsub("\\\\."," ",colnames(work_location_abbreviations))
-      work_location_abbreviations$Abbreviation=toupper(work_location_abbreviations$Abbreviation)
-      if("Work Location" %in% colnames(df)){
-        df$`Work Location`=toupper(df$`Work Location`)
-        match_idx=match(df$`Work Location`,work_location_abbreviations$Abbreviation)
-        df$`Work Location`[!is.na(match_idx)]=work_location_abbreviations$`Work Location`[match_idx[!is.na(match_idx)]]
-      }
-    } else{
-      message(paste("Sheet",company,"does not exist in work location abbreviations file. Skipping work location replacement for", df_name))
-    }
-    #Proper-case First Name and Last Name (after spaces and hyphens)
-    proper_case=function(x){
-      sapply(x,function(val){
-        if(is.na(val)) return(NA_character_)
-        parts=unlist(strsplit(tolower(val),"([ -])",perl=TRUE))
-        seps=regmatches(tolower(val),gregexpr("([ -])",tolower(val),perl=TRUE))[[1]]
-        parts=paste0(toupper(substr(parts,1,1)),substr(parts,2,nchar(parts)))
-        paste(rbind(parts,c(seps,"")),collapse="")
-      },USE.NAMES=FALSE)
-    }
-    if("First Name" %in% colnames(df)){
-      df$`First Name`=proper_case(df$`First Name`)
-    }
-    if("Last Name" %in% colnames(df)){
-      df$`Last Name`=proper_case(df$`Last Name`)
-    }
-    #Assign back to environment
     assign(df_name,df,envir=envir)
   }
 }
@@ -9154,7 +9454,7 @@ build_portable_shiny_bundle_with_updates(app_source_dir=directory,
 ```{r}
 #Update the manifest automatically with the new version
 installer_filename=sprintf("MyShinyAppSetup_v%s.exe",current_version)
-installer_path=file.path(directory, installer_filename)
+installer_path=file.path(directory,installer_filename)
 installer_url=paste0("file:///",gsub("\\\\","/",normalizePath(installer_path)))
 create_version_manifest(installer_url=installer_url,manifest_path=manifest_path,release_notes="Update release",
                         version=current_version)
