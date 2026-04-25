@@ -1,0 +1,258 @@
+---
+title: "Missouri Works"
+author: "Nicholas Ilvento"
+date: "2025-11-13"
+output: html_document
+---
+
+```{r}
+package_updater=function(){
+  #CRAN mirror (no prompts)
+  options(repos=c(CRAN="https://cloud.r-project.org"))
+  #Target library (first lib path)
+  lib=.libPaths()[1]
+  dir.create(lib,recursive=TRUE,showWarnings=FALSE)
+  #Safe installer (binary-first, quiet, stable)
+  safe_install=function(pkg,lib){
+    tryCatch({
+      message("Installing ",pkg," (binary)")
+      install.packages(pkg,lib=lib,repos=getOption("repos"),dependencies=TRUE,type="binary",quiet=TRUE)
+    },error=function(e){
+      stop("Failed to install package: ",pkg,"\n",conditionMessage(e))
+    })
+  }
+  #Required packages
+  required_packages=c("readxl","dplyr","tidyr","stringr","stringi","janitor","tibble","lubridate","openxlsx",
+                      "writexl","purrr","scales","tools","stringdist","pdftools","base64enc","glue","httr","magrittr",
+                      "reticulate","fs","qpdf","emayili","blastula","rvest","jsonlite","xml2","curl","shiny",
+                      "htmltools","zip","later","shinyjs","maps","readr")
+  #Install missing packages
+  installed=installed.packages(lib.loc=lib)[,"Package"]
+  missing=setdiff(required_packages,installed)
+  if(length(missing)){
+    for(pkg in missing){
+      safe_install(pkg,lib)
+    }
+  }
+  #Critical package validation
+  critical=c("stringi","pdftools","qpdf","shiny")
+  for(pkg in critical){
+    if(!requireNamespace(pkg,quietly=TRUE)){
+      stop("Critical package failed to install: ",pkg)
+    }
+  }
+  #Load packages quietly
+  for(pkg in required_packages){
+    suppressPackageStartupMessages(library(pkg,character.only=TRUE,quietly=TRUE))
+  }
+  #Diagnostics: package versions
+  package_versions=sapply(required_packages,function(pkg) as.character(packageVersion(pkg)))
+  cat("\nLoaded package versions:\n")
+  print(package_versions)
+  #RDCOMClient (OmegaHat source)
+  if(!requireNamespace("RDCOMClient",quietly=TRUE)){
+    message("Installing RDCOMClient from OmegaHat...")
+    install.packages("RDCOMClient",repos="http://www.omegahat.net/R",type="source")
+  } else{
+    message("RDCOMClient is already installed.")
+  }
+  library(RDCOMClient)
+  invisible(TRUE)
+}
+```
+
+```{r}
+package_updater()
+directory="K:/Atlas Automation"
+#Define preferred path
+preferred_path=paste0(directory,"/Programs/Site Selection/Kinetic 4-22-2026")
+#Define fallback (Downloads in USERPROFILE)
+fallback_path=file.path(Sys.getenv("USERPROFILE"),"Downloads")
+#Choose path based on existence
+folder_path=if(dir.exists(preferred_path)) preferred_path else fallback_path
+#Read data
+original_file_path=paste0(folder_path,"/Job Data 10 States 4-22-2026.xlsx")
+process_job_data=function(file_path){
+  file_ext=tools::file_ext(file_path)
+  #Default sheet logic
+  sheet=ifelse(file_ext=="xlsx",4,1)
+  #XLSX Path
+  if(file_ext=="xlsx"){
+    df=read_excel(file_path,sheet=sheet,col_names=FALSE)
+    df_t=as.data.frame(t(df),stringsAsFactors=FALSE)
+    new_names=as.character(df_t[1,])
+    new_names[is.na(new_names)|new_names==""]=paste0("V",which(is.na(new_names)|new_names==""))
+    colnames(df_t)=new_names
+    df_t=df_t[-1,]
+    colnames(df_t)=make.unique(colnames(df_t))
+    df_t=rownames_to_column(df_t,var="Original_Column")
+    rownames(df_t)=NULL
+    df_t=df_t[,-1]
+    colnames(df_t)[1]="State"
+    colnames(df_t)=gsub("\\."," ",colnames(df_t))
+    is_empty_col=function(col){
+      all(is.na(col)|col==""|col=="NA")
+    }
+    cols=colnames(df_t)
+    i=1
+    current_prefix=""
+    started=FALSE
+    prefix_list=c()
+    while(i<=length(cols)){
+      if(!started){
+        if(cols[i]=="Occupation Metrics" && is_empty_col(df_t[[i]])){
+          started=TRUE
+        }
+        i=i+1
+        next
+      }
+      if(is_empty_col(df_t[[i]])){
+        new_prefix=cols[i]
+        if(!is.na(new_prefix) && new_prefix!="" && new_prefix!="NA"){
+          current_prefix=new_prefix
+          if(!(current_prefix %in% prefix_list)){
+            prefix_list=c(prefix_list,current_prefix)
+          }
+        }
+        i=i+1
+        next
+      }
+      if(current_prefix!="" && cols[i]!=current_prefix){
+        cols[i]=trimws(paste(current_prefix,cols[i]))
+      }
+      i=i+1
+    }
+    colnames(df_t)=cols
+    colnames(df_t)=gsub("\\s+\\d{1,2}$","",colnames(df_t))
+    colnames(df_t)=trimws(gsub("\\s+"," ",colnames(df_t)))
+    return(list(data=df_t,prefixes=prefix_list,sheet_used=sheet))
+  }
+  #CSV Path
+  if(file_ext=="csv"){
+    df_t=read.csv(file_path,stringsAsFactors=FALSE,check.names=FALSE)
+    colnames(df_t)=gsub("\\."," ",colnames(df_t))
+    colnames(df_t)=trimws(colnames(df_t))
+    prefix_list=NULL
+    #Build prefixes + adjust Metric labels
+    if(all(c("Category","Sub-Category","Metric") %in% names(df_t))){
+      prefix_list=df_t%>%filter(Category=="Occupation Metrics")%>%pull(`Sub-Category`)%>%unique()%>%as.character()
+      df_t=df_t%>%mutate(Metric=dplyr::if_else(Category=="Occupation Metrics" & !is.na(`Sub-Category`) & !is.na(Metric),
+        paste(`Sub-Category`,Metric),Metric))
+    }
+    #Convert to wide format: County × Metrics
+    if(all(c("County","Metric") %in% names(df_t))){
+      #Detect value column (adjust if you know exact name)
+      value_col=setdiff(names(df_t),c("County","Metric","Category","Sub-Category"))[1]
+      df_t=df_t%>%mutate(Metric=trimws(Metric))%>%pivot_wider(names_from=Metric,values_from=all_of(value_col))
+    }
+    #Move County into proper row identifier column
+    if("County" %in% names(df_t)){
+      df_t=df_t%>%rename(State=County)
+    }
+    #Transpose to match Excel structure (if needed for downstream logic)
+    df_t=as.data.frame(t(df_t),stringsAsFactors=FALSE)
+    new_names=as.character(df_t[1,])
+    new_names[is.na(new_names)|new_names==""]=paste0("V",which(is.na(new_names)|new_names==""))
+    colnames(df_t)=new_names
+    df_t=df_t[-1,]
+    #Take second row as new column names
+    new_names=as.character(df_t[2,])
+    #Clean names
+    new_names[is.na(new_names)|new_names==""]=paste0("V",which(is.na(new_names)|new_names==""))
+    #Assign as column names
+    colnames(df_t)=new_names
+    #Remove first two rows (since row 2 became headers)
+    df_t=df_t[-c(1,2),]
+    colnames(df_t)=make.unique(as.character(colnames(df_t)))
+    #Move rownames into a "County" column
+    df_t=tibble::rownames_to_column(df_t,var="County")
+    #Make County the first column explicitly (safe)
+    df_t=df_t%>%relocate(County,.before=1)
+    rownames(df_t)=NULL
+    #Return
+    return(list(data=df_t,prefixes=prefix_list,sheet_used=sheet))
+  }
+  stop("Unsupported file type: ",file_ext)
+}
+#Get all csv and xlsx files in folder
+files=list.files(path=folder_path,pattern="\\.(xlsx|csv)$",full.names=TRUE)
+#Build a data frame
+file_list_df=data.frame(file_name=basename(files),file_path=files,stringsAsFactors=FALSE)
+state_names=tolower(state.name)
+date_pattern="\\b\\d{1,2}-\\d{1,2}-\\d{2,4}\\b"
+for(i in seq_len(nrow(file_list_df))){
+  file_name_lower=tolower(file_list_df$file_name[i])
+  file_path=file_list_df$file_path[i]
+  #Case 1: "Data" + date → generic output
+  if(grepl("data",file_name_lower) && grepl(date_pattern,file_name_lower)){
+    result=process_job_data(file_path)
+    df_t=result$data
+    prefix_list=result$prefixes
+    cat("Loaded generic data file:",file_list_df$file_name[i],"\n")
+    next
+  }
+  #Case 2: State-specific files
+  matched_state=state_names[sapply(state_names,function(s) grepl(s,file_name_lower))]
+  if(length(matched_state)==0) next
+  state=matched_state[1]
+  state_clean=gsub(" ","_",state)
+  result=process_job_data(file_path)
+  assign(paste0(state_clean,"_df_t"),result$data,envir=.GlobalEnv)
+  assign(paste0(state_clean,"_prefix_list"),result$prefixes,envir=.GlobalEnv)
+  cat("Loaded state file:",state,"\n")
+}
+us_map=map_data("state")
+county_map=map_data("county")
+#US MAP (df_t + prefix_list)
+df_main=df_t%>%mutate(State=tolower(State))
+for(prefix in unique(prefix_list)){
+  year=format(Sys.Date(),"%Y")
+  prev_year=as.character(as.numeric(year)-1)
+  col_candidates=c(paste(prefix,year,"Employment Concentration"),paste(prefix,prev_year,"Employment Concentration"),
+                    paste(prefix,"Employment Concentration"))
+  col_name=col_candidates[col_candidates %in% names(df_main)][1]
+  if(is.na(col_name)) next
+  plot_df=df_main%>%select(State,value=all_of(col_name))%>%mutate(value=as.numeric(gsub("[^0-9\\.\\-]","",value)))%>%
+    group_by(State)%>%summarise(value=mean(value,na.rm=TRUE),.groups="drop")
+  map_plot=us_map%>%left_join(plot_df,by=c("region"="State"))
+  p=ggplot(map_plot,aes(long,lat,group=group,fill=value))+geom_polygon(color="white")+coord_fixed(1.3)+
+    labs(title=paste(prefix,"- US Employment Concentration"),fill="Concentration")+theme_void()+
+    scale_fill_gradient(low="#c6dbef",high="#08306b",na.value="lightgray")
+  ggsave(filename=file.path(folder_path,paste0("US_",gsub("[^A-Za-z0-9]","_",prefix),".png")),plot=p,width=8,height=5)
+}
+#State Maps (Only State + Counties)
+df_names=ls(pattern="_df_t$")
+for(df_name in df_names){
+  if(df_name=="df_t") next
+  state_name=gsub("_df_t$","",df_name)
+  prefix_name=paste0(state_name,"_prefix_list")
+  if(!exists(prefix_name)) next
+  df_state=get(df_name)
+  prefix_list_state=get(prefix_name)
+  state_lower=gsub("_"," ",tolower(state_name))
+  #Clean county names
+  df_state=df_state%>%mutate(County=tolower(County),County=gsub(",.*$","",County),County=gsub(" county$","",County),
+    County=trimws(County))
+  #Only County Map For This State
+  state_county_map=county_map%>%filter(region==state_lower)
+  for(prefix in unique(prefix_list_state)){
+    year=format(Sys.Date(),"%Y")
+    prev_year=as.character(as.numeric(year)-1)
+    col_candidates=c(paste(prefix,year,"Employment Concentration"),paste(prefix,prev_year,"Employment Concentration"),
+      paste(prefix,"Employment Concentration"))
+    col_name=col_candidates[col_candidates %in% names(df_state)][1]
+    if(is.na(col_name)) next
+    safe_prefix=gsub("[^A-Za-z0-9]","_",prefix)
+    #State-Only County Map (No US Map)
+    plot_df_county=df_state%>%select(County,value=all_of(col_name))%>%mutate(value=parse_number(value))%>%
+      group_by(County)%>%summarise(value=mean(value,na.rm=TRUE),.groups="drop")
+    map_plot_county=state_county_map%>%left_join(plot_df_county,by=c("subregion"="County"))
+    p_county=ggplot(map_plot_county,aes(long,lat,group=group,fill=value))+geom_polygon(color="white",linewidth=0.3)+
+      coord_fixed(1.2)+labs(title=paste(str_to_title(state_name),"- County -",prefix),fill="Concentration")+
+      theme_void()+scale_fill_gradient(low="#c6dbef",high="#08306b",na.value="lightgray")
+    ggsave(filename=file.path(folder_path,paste0(state_name,"_county_",safe_prefix,".png")),plot=p_county,width=8,height=6)
+  }
+}
+```
+```{r}
+```
