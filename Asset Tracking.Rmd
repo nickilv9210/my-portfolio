@@ -1,0 +1,2236 @@
+---
+title: "Asset Tracking"
+author: "Nicholas Ilvento"
+date: "2026-02-17"
+output: html_document
+---
+
+```{r}
+package_updater=function(){
+  #CRAN mirror (no prompts)
+  options(repos=c(CRAN="https://cloud.r-project.org"))
+  #Target library (first lib path)
+  lib=.libPaths()[1]
+  dir.create(lib,recursive=TRUE,showWarnings=FALSE)
+  #Safe installer (binary-first, quiet, stable)
+  safe_install=function(pkg,lib){
+    tryCatch({
+      message("Installing ",pkg," (binary)")
+      install.packages(pkg,lib=lib,repos=getOption("repos"),dependencies=TRUE,type="binary",quiet=TRUE)
+    },error=function(e){
+      stop("Failed to install package: ",pkg,"\n",conditionMessage(e))
+    })
+  }
+  #Required packages
+  required_packages=c("readxl","dplyr","tidyr","stringr","stringi","janitor","tibble","lubridate","openxlsx",
+                      "writexl","purrr","scales","tools","stringdist","pdftools","base64enc","glue","httr","magrittr",
+                      "reticulate","fs","qpdf","emayili","blastula","rvest","jsonlite","xml2","curl","shiny",
+                      "htmltools","zip","later","shinyjs")
+  #Install missing packages
+  installed=installed.packages(lib.loc=lib)[,"Package"]
+  missing=setdiff(required_packages,installed)
+  if(length(missing)){
+    for(pkg in missing){
+      safe_install(pkg,lib)
+    }
+  }
+  #Critical package validation
+  critical=c("stringi","pdftools","qpdf","shiny")
+  for(pkg in critical){
+    if(!requireNamespace(pkg,quietly=TRUE)){
+      stop("Critical package failed to install: ",pkg)
+    }
+  }
+  #Load packages quietly
+  for(pkg in required_packages){
+    suppressPackageStartupMessages(library(pkg,character.only=TRUE,quietly=TRUE))
+  }
+  #Diagnostics: package versions
+  package_versions=sapply(required_packages,function(pkg) as.character(packageVersion(pkg)))
+  cat("\nLoaded package versions:\n")
+  print(package_versions)
+  #RDCOMClient (OmegaHat source)
+  if(!requireNamespace("RDCOMClient",quietly=TRUE)){
+    message("Installing RDCOMClient from OmegaHat...")
+    install.packages("RDCOMClient",repos="http://www.omegahat.net/R",type="source")
+  } else{
+    message("RDCOMClient is already installed.")
+  }
+  library(RDCOMClient)
+  invisible(TRUE)
+}
+convert_to_date=function(x){
+  if(inherits(x,"Date")) return(x)
+  #Handle factors
+  if(is.factor(x)) x=as.character(x)
+  #Handle character input
+  if(is.character(x)){
+    x_trimmed=trimws(x)
+    #Replace non-date placeholders with NA
+    x_trimmed[x_trimmed %in% c("00/00/0000","","NA","N/A","NaN")]=NA
+    numeric_like=grepl("^\\d+$",x_trimmed)
+    if(all(numeric_like[!is.na(x_trimmed)])){
+      x=as.numeric(x_trimmed)
+    } else{
+      return(suppressWarnings(as.Date(x_trimmed,tryFormats=c("%Y-%m-%d","%m/%d/%Y","%d-%b-%y","%d/%m/%Y"))))
+    }
+  }
+  #Handle numeric input
+  if(is.numeric(x)){
+    convert_single=function(val){
+      if(is.na(val)) return(NA)
+      if(val>=1e12){
+        #Unix timestamp in milliseconds
+        return(as.Date(as.POSIXct(val/1000,origin="1970-01-01",tz="UTC")))
+      } else if(val>=1e5){
+        #Unix timestamp in seconds
+        return(as.Date(as.POSIXct(val,origin="1970-01-01",tz="UTC")))
+      } else if(val>=30000){
+        #Excel serial number or days since 1900
+        return(as.Date(val,origin="1899-12-30"))
+      } else if(val>0 && val<30000){
+        #Excel serial number or days since 1970
+        return(as.Date(val,origin="1970-01-01"))
+      } else{
+        return(NA)
+      }
+    }
+    return(as.Date(vapply(x,convert_single,as.Date(NA))))
+  }
+  return(x)
+}
+rename_files=function(files){
+  month_map=c(jan="01",january="01",feb="02",february="02",mar="03",march="03",apr="04",april="04",may="05",jun="06",
+              june="06",jul="07",july="07",aug="08",august="08",sep="09",sept="09",september="09",oct="10",october="10",
+              nov="11",november="11",dec="12",december="12")
+  month_regex=paste(names(month_map),collapse="|")
+  for(f in files){
+    fname=basename(f)
+    fname_lower=tolower(fname)
+    #Skip Already Fromatted
+    already_formatted=
+      grepl("^\\d{4}\\.\\d{2}\\s+(payroll|census|pay date|fixed asset report)(\\sbonus)?\\.xls[x]?$",fname_lower)||
+      grepl("^\\d{4}\\.q[1-4]\\s+(payroll|census|pay date)(\\sbonus)?\\.xls[x]?$",fname_lower)||
+      grepl("^pay date\\s+\\d{4}\\.\\d{2}\\.\\d{2}(\\sbonus)?\\.xls[x]?$",fname_lower)||
+      grepl("^\\d{4}\\.\\d{2}\\.\\d{2}\\s-\\s\\d{4}\\.\\d{2}\\.\\d{2}\\s+(payroll|census|pay date)(\\sbonus)?\\.xls[x]?$",fname_lower)
+    if(already_formatted) next
+    label=NA
+    file_year=NA
+    file_month=NA
+    file_day=NA
+    file_year_end=NA
+    file_month_end=NA
+    file_day_end=NA
+    quarter_num=NA
+    bonus_flag=grepl("bonus",fname_lower)
+    #Fixed Asset Report
+    if(grepl("fixed asset report",fname_lower)){
+      label="Fixed Asset Report"
+      #MMYYYY anywhere
+      mm_match=str_match(fname_lower,"(\\d{2})(\\d{4})")
+      if(!is.na(mm_match[1,1])){
+        mm=mm_match[1,2]
+        yy=mm_match[1,3]
+        if(as.integer(mm)>=1 && as.integer(mm)<=12){
+          file_month=mm
+          file_year=yy
+        }
+      }
+      #Month YYYY anywhere (incl parentheses)
+      if(is.na(file_year)){
+        month_match=str_match(fname_lower,paste0("(",month_regex,")\\s*(\\d{4})"))
+        if(!is.na(month_match[1,1])){
+          month_name=month_match[1,2]
+          year_num=month_match[1,3]
+          if(month_name %in% names(month_map)){
+            file_month=month_map[[month_name]]
+            file_year=year_num
+          }
+        }
+      }
+    }
+    #Other Label Detection
+    if(is.na(label)){
+      if(grepl("hc|census",fname_lower)) label="Census"
+      else if(grepl("payroll",fname_lower)) label="Payroll"
+      else if(grepl("pay date",fname_lower)) label="Pay Date"
+      else next
+    }
+    #Date Range
+    if(label!="Fixed Asset Report"){
+      date_range_pattern="(\\d{1,2})[\\.\\-](\\d{1,2})[\\.\\-](\\d{2})[\\s\\-]+(\\d{1,2})[\\.\\-](\\d{1,2})[\\.\\-](\\d{2})"
+      range_match=str_match(fname_lower,date_range_pattern)
+      if(!all(is.na(range_match))){
+        convert_year=function(yy){
+          if(as.integer(yy)<50) paste0("20",yy) else paste0("19",yy)
+        }
+        file_year=convert_year(range_match[,4])
+        file_month=sprintf("%02d",as.integer(range_match[,2]))
+        file_day=sprintf("%02d",as.integer(range_match[,3]))
+        file_year_end=convert_year(range_match[,7])
+        file_month_end=sprintf("%02d",as.integer(range_match[,5]))
+        file_day_end=sprintf("%02d",as.integer(range_match[,6]))
+      } else{
+        #Quarter + Year
+        qy=str_match(fname_lower,"(?:(\\d{4})\\s*(?:q|qtr|quarter)\\s*([1-4])|(?:q|qtr|quarter)\\s*([1-4])\\s*(\\d{4}))")
+        if(!all(is.na(qy))){
+          if(!is.na(qy[2]) && !is.na(qy[3])){
+            file_year=qy[2]
+            quarter_num=as.integer(qy[3])
+          } else if(!is.na(qy[4]) && !is.na(qy[5])){
+            quarter_num=as.integer(qy[4])
+            file_year=qy[5]
+          }
+        }
+        #Quarter Without Year
+        if(is.na(quarter_num)){
+          qm=str_match(fname_lower,"(?:([1-4])\\s*qtr|([1-4])\\s*q)")
+          if(!all(is.na(qm))){
+            quarter_num=as.integer(na.omit(qm[2:3])[1])
+          }
+        }
+        if(!is.na(quarter_num)){
+          if(is.na(file_year)){
+            created_time=file.info(f)$ctime
+            if(!is.na(created_time)) file_year=format(created_time,"%Y")
+          }
+          file_month=sprintf("%02d",c(3,6,9,12)[quarter_num])
+          file_day="01"
+        } else{
+          #MM.DD.YYYY or MM-DD-YYYY first
+          mdy_alt=str_match(fname_lower,"(\\d{1,2})[\\.\\-](\\d{1,2})[\\.\\-](\\d{4})")
+          if(!all(is.na(mdy_alt))){
+            file_month=sprintf("%02d",as.integer(mdy_alt[1,2]))
+            file_day=sprintf("%02d",as.integer(mdy_alt[1,3]))
+            file_year=mdy_alt[1,4]
+          } else {
+            #Existing YMD
+            ymd=str_match(fname,"(\\d{4})[-\\.]?(\\d{1,2})(?:[-\\.]?(\\d{1,2}))?")
+            mdy=str_match(fname,"(\\d{1,2})[-\\.]?(\\d{1,2})[-\\.]?(\\d{4})")
+            if(!all(is.na(ymd)) && !is.na(ymd[1,2])){
+              file_year=ymd[1,2]
+              file_month=sprintf("%02d",as.integer(ymd[1,3]))
+              if(!is.na(ymd[1,4])) file_day=sprintf("%02d",as.integer(ymd[1,4]))
+            } else if(!all(is.na(mdy)) && !is.na(mdy[1,4])){
+              file_month=sprintf("%02d",as.integer(mdy[1,1]))
+              file_day=sprintf("%02d",as.integer(mdy[1,2]))
+              file_year=mdy[1,3]
+            }
+          }
+          #Fallback year
+          if(is.na(file_year)){
+            created_time=file.info(f)$ctime
+            if(!is.na(created_time)) file_year=format(created_time,"%Y")
+          }
+        }
+      }
+    }
+    #Build Final Name
+    ext=file_ext(fname)
+    new_name=NA
+    if(!is.na(file_year_end)){
+      new_name=paste0(label, " ",file_year,".",file_month,".",file_day," - ",file_year_end,".",file_month_end,".",file_day_end)
+    } else if(!is.na(quarter_num) && !is.na(file_year)){
+      new_name=paste0(label, " ",file_year,".Q",quarter_num)
+    } else if(!is.na(file_year) && !is.na(file_month)){
+      if(!is.na(file_day)) new_name=paste0(label, " ", file_year,".",file_month,".",file_day)
+      else new_name=paste0(label, " ",file_year,".",file_month)
+    }
+    if(bonus_flag && !is.na(new_name)) new_name=paste(new_name,"Bonus")
+    #Rename
+    if(!is.na(new_name)){
+      new_file=file.path(dirname(f), paste0(new_name,".",ext))
+      if(f!=new_file){
+        file.rename(f,new_file)
+        message("Renamed: ",fname," -> ",basename(new_file))
+      }
+    }
+  }
+}
+column_renaming_assets=function(df_list){
+  envir=parent.frame()
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Balance Sheet Date column
+    idx_bs=grep("balance[\\s._]*sheet[\\s._]*date",colnames(df),ignore.case=TRUE)
+    if(length(idx_bs)>=1){
+      colnames(df)[idx_bs[1]]="Balance Sheet Date"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Plant Name column
+    idx_cc=grep("plant[\\s._]*name",colnames(df),ignore.case=TRUE)
+    if(length(idx_cc)>=1){
+      colnames(df)[idx_cc[1]]="Plant Name"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Profit Center column
+    idx_cc=grep("profit[\\s._]*center",colnames(df),ignore.case=TRUE)
+    if(length(idx_cc)>=1){
+      colnames(df)[idx_cc[1]]="Profit Center"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Plant Code column
+    idx_cc=grep("plant[\\s._]*code",colnames(df),ignore.case=TRUE)
+    if(length(idx_cc)>=1){
+      colnames(df)[idx_cc[1]]="Plant Code"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Balance Sheet Account column
+    idx_bs=grep("balance[\\s._]*sh[\\s._]*acct[\\s._]*apc",colnames(df),ignore.case=TRUE)
+    if(length(idx_bs)>=1){
+      colnames(df)[idx_bs[1]]="Balance Sheet Account"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Column that is exactly "asset" (allowing spaces, underscores, dots)
+    idx_asset=grep("^[[:space:]_.]*asset[[:space:]_.]*$",colnames(df),ignore.case=TRUE)
+    if(length(idx_asset)>=1){
+      colnames(df)[idx_asset[1]]="Asset"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Sub Number column
+    idx_cc=grep("sub[\\s._]*number",colnames(df),ignore.case=TRUE)
+    if(length(idx_cc)>=1){
+      colnames(df)[idx_cc[1]]="Sub Number"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Description column
+    idx_asset=grep("description",colnames(df),ignore.case=TRUE)
+    if(length(idx_asset)>=1){
+      colnames(df)[idx_asset[1]]="Description"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Capitalization Date column
+    idx_cc=grep("capitalization[\\s._]*date",colnames(df),ignore.case=TRUE)
+    if(length(idx_cc)>=1){
+      colnames(df)[idx_cc[1]]="Capitalization Date"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Acquisition Value column
+    idx_cc=grep("acquis[\\s._]*val",colnames(df),ignore.case=TRUE)
+    if(length(idx_cc)>=1){
+      colnames(df)[idx_cc[1]]="Acquisition Value"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Accumulated Depreciation column
+    idx_cc=grep("accum[\\s._]*dep",colnames(df),ignore.case=TRUE)
+    if(length(idx_cc)>=1){
+      colnames(df)[idx_cc[1]]="Accumulated Depreciation"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Book Value column
+    idx_cc=grep("book[\\s._]*val",colnames(df),ignore.case=TRUE)
+    if(length(idx_cc)>=1){
+      colnames(df)[idx_cc[1]]="Book Value"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Cost Center column
+    idx_cc=grep("cost[\\s._]*center",colnames(df),ignore.case=TRUE)
+    if(length(idx_cc)>=1){
+      colnames(df)[idx_cc[1]]="Cost Center"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Find any column containing "asset", "class", "name" in order with any separators
+    idx_ac=grep("asset[[:space:]_.]*class[[:space:]_.]*name",colnames(df),ignore.case=TRUE)
+    #If at least one match → rename the first to "Asset Class Name"
+    if(length(idx_ac)>=1){
+      colnames(df)[idx_ac[1]]="Asset Class Name"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Asset Class
+    idx_ac=grep("asset[\\s._]*class",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Asset Class"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Acquisition Value
+    idx_ac=grep("acquisition[\\s._]*value",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Acquisition Value"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Acummulated Depreciation
+    idx_ac=grep("acummulated[\\s._]*depreciation",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Acummulated Depreciation"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Book Value
+    idx_ac=grep("book[\\s._]*value",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Book Value"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Currency
+    idx_ac=grep("currency",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Currency"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Balance Sheet Item column
+    idx_bs=grep("balance[\\s._]*sheet[\\s._]*item",colnames(df),ignore.case=TRUE)
+    if(length(idx_bs)>=1){
+      colnames(df)[idx_bs[1]]="Balance Sheet Item"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Useful Life
+    idx_ac=grep("useful[\\s._]*life",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Useful Life"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Legacy Number
+    idx_ac=grep("legacy[\\s._]*number",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Legacy Number"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #First Acquisition On column
+    idx_bs=grep("first[\\s._]*acquisition[\\s._]*on",colnames(df),ignore.case=TRUE)
+    if(length(idx_bs)>=1){
+      colnames(df)[idx_bs[1]]="Acquisition Date"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Acquisition Year
+    idx_ac=grep("acquisition[\\s._]*year",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Acquisition Year"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Municipality
+    idx_ac=grep("municipality",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Municipality"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Location
+    idx_ac=grep("location",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Location"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Plant (exact match, ignore case)
+    idx_plant=grep("^plant$",colnames(df),ignore.case=TRUE)
+    if(length(idx_plant)==1){
+      colnames(df)[idx_plant]="Plant"
+    }
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Company Code
+    idx_ac=grep("company[\\s._]*code",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Company Code"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Capitalized On
+    idx_ac=grep("capitalized[\\s._]*on",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Capitalization Date"
+    assign(df_name,df,envir=envir)
+  }
+  for(df_name in df_list){
+    df=get(df_name,envir=envir)
+    #Balance Sheet Account
+    idx_ac=grep("bal[\\s._]*sh[\\s._]*acct[\\s._]*apc",colnames(df),ignore.case=TRUE)
+    if(length(idx_ac)>=1) colnames(df)[idx_ac[1]]="Balance Sheet Account"
+    assign(df_name,df,envir=envir)
+  }
+}
+automate_excel_save=function(file_path){
+  #Force creation of a NEW Excel instance (not connecting to existing)
+  excel_app=COMCreate("Excel.Application",existing=FALSE)
+  excel_app[["Visible"]]=FALSE
+  excel_app[["DisplayAlerts"]]=FALSE
+  excel_app[["ScreenUpdating"]]=FALSE
+  #Normalize the file path
+  file_path=normalizePath(file_path,winslash="\\",mustWork=TRUE)
+  #Open the workbook
+  workbook=excel_app[["Workbooks"]]$Open(file_path)
+  #Force recalculation and refresh
+  excel_app$CalculateFullRebuild()
+  workbook$RefreshAll()
+  #Wait for calculations to complete
+  if("CalculateUntilAsyncQueriesDone" %in% names(excel_app)){
+    excel_app$CalculateUntilAsyncQueriesDone()
+  }
+  #Save and close
+  workbook$Save()
+  workbook$Close(SaveChanges=FALSE)
+  #Quit this instance
+  excel_app$Quit()
+  #Clean up
+  rm(workbook,excel_app)
+  gc()
+}
+```
+
+```{r}
+asset_tracking_model=function(company,start_month=NULL,end_month=NULL,start_quarter=NULL,
+                              end_quarter=NULL,start_year,end_year){
+  package_updater()
+  #Input validations
+  validate_inputs=function(company,start_month=NULL,end_month=NULL,start_quarter=NULL,end_quarter=NULL,
+                           start_year,end_year){
+    #Company validation
+    if(!is.character(company)){
+      stop("Error: Company must be a string.")
+    }
+    #Year validation
+    if(is.null(start_year)||is.null(end_year)){
+      stop("Error: Both 'start_year' and 'end_year' must be provided.")
+    }
+    if(!is.numeric(start_year)||start_year<=0||start_year!=as.integer(start_year)){
+      stop("Error: 'start_year' must be a positive nonzero integer.")
+    }
+    if(!is.numeric(end_year)||end_year<=0||end_year!=as.integer(end_year)){
+      stop("Error: 'end_year' must be a positive nonzero integer.")
+    }
+    if(start_year>end_year){
+      stop("Error: 'start_year' must be before or equal to 'end_year'.")
+    }
+    #Month vs Quarter exclusivity
+    if((!is.null(start_month)||!is.null(end_month)) && (!is.null(start_quarter)||!is.null(end_quarter))){
+      stop("Error: Provide either month range or quarter range, not both.")
+    }
+    #Month validation
+    if(!is.null(start_month)||!is.null(end_month)){
+      if(is.null(start_month)||is.null(end_month)){
+        stop("Error: Both 'start_month' and 'end_month' must be provided together.")
+      }
+      if(!is.character(start_month)||!is.character(end_month)){
+        stop("Error: Months must be strings.")
+      }
+      valid_months=month.name
+      if(!(start_month %in% valid_months)){
+        stop(paste("Error: Invalid 'start_month'. Must be one of:",paste(valid_months,collapse=", ")))
+      }
+      if(!(end_month %in% valid_months)){
+        stop(paste("Error: Invalid 'end_month'. Must be one of:",paste(valid_months,collapse=", ")))
+      }
+      #Chronological check for months
+      start_idx=match(start_month,valid_months)
+      end_idx=match(end_month,valid_months)
+      if(start_year==end_year && start_idx>end_idx){
+        stop("Error: 'start_month' must not be after 'end_month' within the same year.")
+      }
+    }
+    #Quarter validation
+    if(!is.null(start_quarter)||!is.null(end_quarter)){
+      if(is.null(start_quarter)||is.null(end_quarter)){
+        stop("Error: Both 'start_quarter' and 'end_quarter' must be provided together.")
+      }
+      if(!is.numeric(start_quarter)||!(start_quarter %in% 1:4)){
+        stop("Error: 'start_quarter' must be a number between 1 and 4.")
+      }
+      if(!is.numeric(end_quarter)||!(end_quarter %in% 1:4)){
+        stop("Error: 'end_quarter' must be a number between 1 and 4.")
+      }
+      #Chronological check for quarters
+      if(start_year==end_year && start_quarter>end_quarter){
+        stop("Error: 'start_quarter' must not be after 'end_quarter' within the same year.")
+      }
+    }
+    return(TRUE) #Passed all checks
+  }
+  validate_inputs(company=company,start_month=start_month,end_month=end_month,start_quarter=start_quarter,
+                  end_quarter=end_quarter,start_year=start_year,end_year=end_year)
+  directory="K:/Atlas Automation/"
+  #Define file path and sheet
+  file_path=paste0(directory,"Programs/Asset Tracking/",company,"/",company," Asset Tracking Report.xlsx")
+  if(file.exists(file_path)){
+    wb=loadWorkbook(file_path)
+    all_sheets=names(wb)
+    #Helper to convert sheet names into actual dates
+    parse_period_date=function(name){
+      if(grepl("^[0-9]{2}\\.[0-9]{4}$",name)){ #"03.2025"
+        parts=strsplit(name,"\\.")[[1]]
+        month=as.integer(parts[1])
+        year=as.integer(parts[2])
+        return(as.Date(sprintf("%04d-%02d-01",year,month)))
+      } else if(grepl("^Q[1-4]\\.[0-9]{4}$",name)){ #"Q1.2025"
+        parts=strsplit(name,"\\.")[[1]]
+        quarter=as.integer(sub("Q","",parts[1]))
+        year=as.integer(parts[2])
+        month_equiv=(quarter-1)*3+1 #Q1 = Jan, Q2 = Apr, etc.
+        return(as.Date(sprintf("%04d-%02d-01",year,month_equiv)))
+      } else{
+        return(as.Date(NA)) #Not a recognized period
+      }
+    }
+    #Determine period cutoff
+    if(!is.null(start_month)){
+      month_num=match(tolower(start_month),tolower(month.name))
+      start_date=as.Date(paste0(start_year,"-",sprintf("%02d",month_num),"-01"))
+      month_upper=paste0(toupper(substr(start_month,1,1)),tolower(substr(start_month,2,nchar(start_month))))
+      period_label_sheet=sprintf("%02d.%d",month_num,start_year) #"MM.YYYY"
+      period_label_form=paste0(substr(month_upper,1,3),"-",substr(start_year,3,4)) #"MMM-YY"
+    } else if(!is.null(start_quarter)){
+      start_month_num=(start_quarter-1)*3+1
+      start_date=as.Date(paste0(start_year,"-",sprintf("%02d",start_month_num),"-01"))
+      period_label_sheet=paste0("Q",start_quarter,".",start_year) #"QX.YYYY"
+      period_label_form=paste0("Q",start_quarter," ",start_year) #"QX YYYY"   
+    } else{
+      stop("Either month or quarter must be defined.")
+    }
+    #Identify period-based sheets
+    period_pattern="^(?:[0-9]{2}\\.[0-9]{4}|Q[1-4]\\.[0-9]{4})$"
+    period_sheets=grep(period_pattern,all_sheets,value=TRUE)
+    #Convert their names into dates
+    period_dates=sapply(period_sheets,parse_period_date)
+    #Remove current + future periods
+    future_sheets=period_sheets[period_dates>=start_date]
+    for(s in future_sheets) removeWorksheet(wb,s)
+    #Save
+    wb$ActiveSheet=1L
+  } else{
+    message("File does not exist: ",file_path," — skipping.")
+  }
+  #Function to get cutoff date depending on mode
+  get_cutoff=function(year,month=NULL,quarter=NULL){
+    if(!is.null(month)){
+      #Month mode → cutoff = 1st of that month
+      month_num=match(month,month.name)
+      list(cutoff_date=as.Date(sprintf("%d-%02d-01",year,month_num)),type="month")
+    } else if(!is.null(quarter)){
+      #Quarter mode → cutoff = 1st of first month in that quarter
+      month_num=(quarter-1)*3+1
+      list(cutoff_date=as.Date(sprintf("%d-%02d-01",year,month_num)),type="quarter")
+    } else{
+      stop("Must provide either month or quarter.")
+    }
+  }
+  #Parse YYYY.MM or YYYY.QX into a date and type
+  parse_period=function(p){
+    if(str_detect(p,"Q")){
+      year=as.integer(str_extract(p,"^\\d{4}"))
+      q=as.integer(str_extract(p,"(?<=Q)\\d"))
+      month_num=(q-1)*3+1
+      list(date=as.Date(sprintf("%d-%02d-01",year,month_num)),type="quarter")
+    } else{
+      year=as.integer(str_extract(p,"^\\d{4}"))
+      month=as.integer(str_extract(p,"(?<=\\.)\\d{2}"))
+      list(date=as.Date(sprintf("%d-%02d-01",year,month)),type="month")
+    }
+  }
+  report_function=function(company,month=NULL,quarter=NULL,year){
+    start_time_1=Sys.time()
+    #Input validations
+    if(!is.null(month) && !is.null(quarter)){
+      stop("Error: Provide either 'month' or 'quarter', not both.")
+    }
+    if(is.null(month) && is.null(quarter)){
+      stop("Error: You must provide either 'month' or 'quarter'.")
+    }
+    if(!is.character(company)){
+      stop("Error: Company must be a string.")
+    }
+    if(!is.null(month) && !is.character(month)){
+      stop("Error: Month must be a string.")
+    }
+    if(!is.null(quarter) && (!is.numeric(quarter)||!(quarter %in% 1:4))){
+      stop("Error: Quarter must be a number between 1 and 4.")
+    }
+    if(!is.numeric(year)||year<=0||year!=as.integer(year)){
+      stop("Error: The year must be a positive nonzero integer.")
+    }
+    #Status message
+    if(!is.null(month)){
+      message("Running model for company: ",company," | Month: ",month," ",year)
+    } else{
+      message("Running model for company: ",company," | Quarter: Q",quarter," ",year)
+    }
+    #Locate files
+    folder_path=paste0(directory,"Programs/Asset Tracking/",company,"/Asset Reports")
+    all_files=list.files(path=folder_path,pattern="\\.xls[x]?$",full.names=TRUE)
+    rename_files(all_files)
+    all_files=list.files(path=folder_path,pattern="\\.xls[x]?$",full.names=TRUE)
+    all_files_lower=tolower(all_files)
+    #Initialize list of month variants
+    month_variants=character(0)
+    if(!is.null(month)){
+      #Add variants for single month
+      month_num=match(tolower(month),tolower(month.name))
+      month_variants=tolower(c(month,substr(month,1,3),sprintf("%02d",month_num),as.character(month_num)))
+      #Determine quarter of this month
+      quarter_from_month=ceiling(month_num/3)
+    }
+    if(!is.null(quarter)){
+      #Expand quarter months and generate variants
+      quarter_months_list=list(c("January","February","March"),c("April","May","June"),c("July","August","September"),
+                               c("October","November","December"))
+      quarter_months=quarter_months_list[[as.integer(quarter)]]
+      for(m in quarter_months){
+        m_num=match(tolower(m),tolower(month.name))
+        month_variants=c(month_variants,tolower(c(m,substr(m,1,3),sprintf("%02d",m_num),as.character(m_num))))
+      }
+    }
+    #Remove duplicates
+    month_variants=unique(month_variants)
+    #Match any file that includes the year and at least one month variant
+    file_matches=all_files[sapply(seq_along(all_files_lower),function(i){
+      fname=all_files_lower[i]
+      has_year=grepl(paste0("\\b",year,"\\b"),fname)
+      has_month=any(sapply(month_variants,function(mv){
+        grepl(paste0("(^|[^[:alnum:]])",mv,"([^[:alnum:]]|$)"),fname)
+      }))
+      has_year && has_month
+    })]
+    #If no matches, try matching quarter keywords
+    if(length(file_matches)==0 && !is.null(quarter)){
+      quarter_keywords=c("quarter","qtr",paste0("q",quarter))
+      file_matches=all_files[sapply(all_files_lower,function(fname){
+        grepl(year,fname) && any(sapply(quarter_keywords,function(qk) grepl(qk,fname)))
+      })]
+    }
+    #Also allow YYYY.QX formatted files
+    if(length(file_matches)==0){
+      if(!is.null(month)){
+        #Get quarter from month
+        q=quarter_from_month
+        pattern=paste0("\\b",year,"\\.q",q,"\\b")
+        file_matches=all_files[grepl(pattern,all_files_lower)]
+      } else if(!is.null(quarter)){
+        pattern=paste0("\\b",year,"\\.q",quarter,"\\b")
+        file_matches=all_files[grepl(pattern,all_files_lower)]
+      }
+    }
+    #Import matched files
+    if(length(file_matches)==0){
+      warning("No matching files found.")
+    } else{
+      for(file_path in file_matches){
+        #Generate a safe data frame name
+        df_name=paste0("df_",gsub("[^[:alnum:]]","_",tools::file_path_sans_ext(basename(file_path))))
+        #Check if the sheet "DataBase" exists
+        sheets=excel_sheets(file_path)
+        if("DataBase" %in% sheets){
+          df=read_excel(file_path,sheet="DataBase")
+        } else{
+          df=read_excel(file_path) #Default first sheet
+        }
+        #Assign to environment
+        assign(df_name,df)
+        print(paste("Imported:",df_name))
+      }
+    }
+    #List all objects in the environment matching the pattern
+    all_objects=ls(pattern="^df_")
+    #Filter only objects that are data frames
+    df_list=all_objects[sapply(all_objects,function(x) is.data.frame(get(x)))]
+    clean_and_transform_new=function(df){  
+      #Convert everything to character first
+      df=df%>%mutate(across(everything(),as.character))
+      #Remove mostly-empty columns
+      n_rows_to_check=min(10,nrow(df))
+      keep_cols=sapply(df,function(col){
+        first_rows=col[1:n_rows_to_check]
+        majority_na=mean(is.na(col)|col=="")<=0.95
+        first_rows_nonempty=any(!is.na(first_rows) & first_rows!="")
+        majority_na && first_rows_nonempty
+      })
+      df=df[,keep_cols,drop=FALSE]
+      #Shift header if needed
+      is_numbered_format=function(string) grepl("^\\.\\.\\..*\\d+$",string)
+      column_names=colnames(df)
+      if(sum(sapply(column_names,is_numbered_format))>=length(column_names)/2){
+        full_rows=which(rowSums(!is.na(df) & df!="")==ncol(df))
+        first_full_row=if(length(full_rows)>0) full_rows[1] else NA
+        if(!is.na(first_full_row)){
+          colnames(df)=as.character(df[first_full_row,])
+          df=df[(first_full_row+1):nrow(df),]
+        }
+      }
+      #Clean column names
+      df=df%>%clean_names()
+      #Trim to last majority-full row
+      majority_full_rows=which(rowSums(!is.na(df) & df!="")>=ncol(df)/2)
+      if(length(majority_full_rows)>0) df=df[1:max(majority_full_rows),]
+      #Numeric conversion
+      df=df%>%mutate(across(everything(),~{
+        x=gsub("[$,]","",.x)
+        if(all(is.na(x)|grepl("^[-]?\\d+(\\.\\d+)?$",x))) suppressWarnings(as.numeric(x)) else .x
+      }))
+      return(df)
+    }
+    clean_and_transform=function(df){
+      #Function to check if a string is in the format "...NUMBER"
+      is_numbered_format=function(string){
+        grepl("^\\.\\.\\..*\\d+$",string)  #Match columns starting with "..." followed by digits
+      }
+      #Get the column names of the data frame
+      column_names=colnames(df)
+      #Check if majority of the column titles are in the format "...NUMBER"
+      if(sum(sapply(column_names,is_numbered_format))>=length(column_names)/2){
+        #If majority are in the desired format, process the data frame
+        #Identify the first full row with all non-NA values
+        first_full_row=which(apply(df,1,function(row) all(!is.na(row))))[1]
+        if(length(first_full_row)==0){
+          return(df) #Return original if no full row exists
+        }
+        #Extract the contents of this row to use as new column names
+        new_column_names=as.character(df[first_full_row,])
+        #Remove rows up to and including this identified row
+        cleaned_df=df[(first_full_row+1):nrow(df),]
+        #Apply the new column names
+        colnames(cleaned_df)=new_column_names
+      } else{
+        #If majority are not in the desired format, return the data frame as is
+        cleaned_df=df
+      }
+      #Clean column names using janitor (if needed)
+      cleaned_df=cleaned_df%>%clean_names()
+      #Function to check if a row is majority full (at least half non-NA values)
+      majority_full_row=function(row){
+        sum(!is.na(row))>=length(row)/2
+      }
+      #Find the last majority full row
+      majority_full_rows=which(apply(cleaned_df,1,majority_full_row))
+      if(length(majority_full_rows)>0){
+        last_majority_full_row=max(majority_full_rows)
+        cleaned_df=cleaned_df[1:last_majority_full_row,]
+      }
+      #Convert numeric columns
+      for(col_name in colnames(cleaned_df)){
+        if(all(grepl("^\\d+(\\.\\d+)?$",cleaned_df[[col_name]]))){
+          cleaned_df[[col_name]]=as.numeric(cleaned_df[[col_name]])
+        }
+      }
+      return(cleaned_df)
+    }
+    #Apply the cleaning function to each data frame and reassign it
+    for(df_name in df_list){
+      cleaned_data=clean_and_transform_new(get(df_name))
+      #Reassign the cleaned data frame back to its original name
+      assign(df_name,cleaned_data)
+      #Print confirmation
+      print(paste("Cleaned and transformed:",df_name))
+    }
+    column_renaming_assets(df_list=df_list)
+    combined_asset_data=do.call(rbind,lapply(df_list,function(df_name) get(df_name)))
+    combined_asset_data$`Acquisition Value`=as.numeric(combined_asset_data$`Acquisition Value`)
+    #Only replace numeric codes if "Asset Class" column exists
+    if("Asset Class" %in% colnames(combined_asset_data)){
+      #Extract the column and convert to character
+      ac=as.character(combined_asset_data$`Asset Class`)
+      #Identify rows that do NOT contain any letters (a-z or A-Z)
+      is_numeric_code=!grepl("[a-zA-Z]",ac)
+      #Replace blanks (NA or "") with 0
+      ac[is_numeric_code & (is.na(ac)|ac=="")]="0"
+      #Map numeric codes to descriptions
+      code_map=list("0"="0","4100"="Asset Under Construction",
+                    "1500"="Construction on Other Land","1400"="Construction on Owned Property",
+                    "1401"="Construction on Owned Property","2000"="Conventional Equipment and Instalations (MIC)",
+                    "2001"="Conventional Equipment and Instalations (MIC)","2500"="Conventional Industrial Tools",
+                    "3000"="Data Processing & Office Automation Equipment","3001"="Data Processing & Office Automation Equipment",
+                    "2100"="Equis and Installations Sensitive to Tech Changes","2101"="Equis and Installations Sensitive to Tech Changes",
+                    "1600"="Improvements and Fixtures of Constructions","7100"="Intangible Assets (not an Asset Class per se)",
+                    "1001"="Land","1100"="Land Improvement & Fixtures","1101"="Land Improvement & Fixtures",
+                    "1300"="Leasehold Improvement & Fixtures","6100"="Licenses","3400"="Office Equipment & Social Equipment",
+                    "3401"="Office Equipment & Social Equipment","2200"="Other Computarized Equipment and Installations",
+                    "2201"="Other Computarized Equipment and Installations","6900"="Other Intangible Assets",
+                    "3900"="Other Tangible Asset","3901"="Other Tangible Asset","5200"="Research & Development Cost Electronics",
+                    "5100"="Research & Development Cost Hardware Electronics","5300"="Software","5301"="Software",
+                    "2600"="Special Tools","2601"="Special Tools","3200"="Transportation Equipment","3201"="Transportation Equipment")
+      #Replace numeric codes with mapped descriptions
+      ac[is_numeric_code]=sapply(ac[is_numeric_code],function(x){
+        x=as.character(x) #Ensure character
+        if(x %in% names(code_map)) code_map[[x]] else x
+      })
+      #Assign back to dataframe
+      combined_asset_data$`Asset Class`=ac
+    }
+    combined_asset_data$Asset=as.character(combined_asset_data$Asset)
+    combined_asset_data$`Capitalization Date`=as.Date(combined_asset_data$`Capitalization Date`)
+    combined_asset_data$`Acquisition Date`=as.Date(combined_asset_data$`Acquisition Date`)
+    file_path=paste0(directory,"Programs/Asset Tracking/",company,"/",company," Asset Tracking Report.xlsx")
+    sheet_name="Combined Asset Data"
+    #If file exists, load it; otherwise create new workbook
+    if(file.exists(file_path)){
+      wb=loadWorkbook(file_path)
+    } else{
+      wb=createWorkbook()
+    }
+    #Remove sheet if it already exists
+    if(sheet_name %in% names(wb)){
+      removeWorksheet(wb,sheet_name)
+    }
+    #Add new sheet
+    addWorksheet(wb,sheet_name,tabColour="#8B0000")
+    #Write data
+    writeData(wb,sheet=sheet_name,combined_asset_data)
+    cols_to_format=c("Balance Sheet Date","Plant Name","Profit Center","Plant Code","Asset Class Name")
+    existing_cols=intersect(cols_to_format,names(combined_asset_data))
+    num_existing=length(existing_cols)
+    #Freeze top row + first 5 columns
+    freezePane(wb,sheet=sheet_name,firstActiveRow=2,firstActiveCol=num_existing+1)
+    #Bold header row
+    header_style=createStyle(textDecoration="bold")
+    addStyle(wb,sheet=sheet_name,style=header_style,rows=1,cols=1:ncol(combined_asset_data),gridExpand=TRUE)
+    #Add filters
+    addFilter(wb,sheet=sheet_name,rows=1,cols=1:ncol(combined_asset_data))
+    #Find Balance Sheet Date column index
+    bsd_col=which(colnames(combined_asset_data)=="Balance Sheet Date")
+    if(length(bsd_col)==1){
+      #Header style: black fill + white bold text
+      bsd_header_style=createStyle(fgFill="#000000",fontColour="#FFFFFF")
+      addStyle(wb,sheet=sheet_name,style=bsd_header_style,rows=1,cols=bsd_col,stack=TRUE)
+      #Body style: grey fill + date format MMM-YY
+      bsd_body_style=createStyle(fgFill="#BFBFBF",numFmt="mmm-yy") 
+      addStyle(wb,sheet=sheet_name,style=bsd_body_style,rows=2:(nrow(combined_asset_data)+1),cols=bsd_col,
+                gridExpand=TRUE,stack=TRUE)
+    }
+    cols_to_format=c("Plant Name","Profit Center","Plant Code","Asset Class Name")
+    #Find column indices in combined_asset_data
+    col_idx=which(names(combined_asset_data) %in% cols_to_format)
+    if(length(col_idx)>0){
+      #Header style
+      header_style=createStyle(fgFill="#806000",fontColour="#FFFFFF")
+      #Body style
+      body_style=createStyle(fgFill="#FFF2CC")
+      #Apply header style
+      addStyle(wb,sheet=sheet_name,style=header_style,rows=1,cols=col_idx,gridExpand=TRUE,stack=TRUE)
+      #Apply body style
+      addStyle(wb,sheet=sheet_name,style=body_style,rows=2:(nrow(combined_asset_data)+1),cols=col_idx,
+                gridExpand=TRUE,stack=TRUE)
+    }
+    special_cols=c("Balance Sheet Date","Plant Name","Profit Center","Plant Code","Asset Class Name","Plant")
+    all_cols=names(combined_asset_data)
+    #Columns that get orange header (everything except special)
+    other_cols=setdiff(all_cols,special_cols)
+    other_idx=which(all_cols %in% other_cols)
+    #Plant column index
+    plant_idx=which(all_cols=="Plant")
+    #Styles
+    header_orange=createStyle(fgFill="#ED7D31",fontColour="#FFFFFF")
+    header_plant=createStyle(fgFill="#548235",fontColour="#FFFFFF")
+    #Apply orange to all non-special columns
+    if(length(other_idx)>0){
+      addStyle(wb,sheet=sheet_name,style=header_orange,rows=1,cols=other_idx,gridExpand=TRUE,stack=TRUE)
+    }
+    #Apply Plant header style
+    if(length(plant_idx)==1){
+      addStyle(wb,sheet=sheet_name,style=header_plant,rows=1,cols=plant_idx,gridExpand=TRUE,stack=TRUE)
+    }
+    date_cols=c("Capitalization Date","Acquisition Date")
+    #Apply date formatting for each column if it exists
+    for(col_name in date_cols){
+      col_idx=which(names(combined_asset_data)==col_name)
+      if(length(col_idx)==1){
+        date_style=createStyle(numFmt="DATE")
+        addStyle(wb,sheet=sheet_name,style=date_style,rows=2:(nrow(combined_asset_data)+1),cols=col_idx,
+                  gridExpand=TRUE,stack=TRUE)
+      }
+    }
+    acct_cols=c("Acquisition Value","Accumulated Depreciation","Book Value")
+    acct_idx=which(names(combined_asset_data) %in% acct_cols)
+    if(length(acct_idx)>0){
+      acct_style=createStyle(numFmt="ACCOUNTING")
+      addStyle(wb,sheet=sheet_name,style=acct_style,rows=2:(nrow(combined_asset_data)+1),cols=acct_idx,
+                gridExpand=TRUE,stack=TRUE)
+    }
+    message("Combined Asset Data sheet updated.")
+    #Ensure Balance Sheet Date is Date class
+    combined_asset_data$`Balance Sheet Date`=as.Date(combined_asset_data$`Balance Sheet Date`)
+    asset_report=combined_asset_data[0,] #Default empty
+    if(!is.null(quarter)){
+      #Quarter start/end months
+      quarter_start=c(1,4,7,10)[quarter]
+      quarter_end=c(3,6,9,12)[quarter]
+      start_date=as.Date(sprintf("%d-%02d-01",year,quarter_start))
+      #End of quarter = last day of quarter_end month
+      end_date=as.Date(sprintf("%d-%02d-%02d",year,quarter_end, 
+                                as.integer(format(as.Date(sprintf("%d-%02d-01",year,quarter_end))+months(1)-1,"%d"))))
+      asset_report=combined_asset_data[combined_asset_data$`Balance Sheet Date`>=start_date &
+                                        combined_asset_data$`Balance Sheet Date`<=end_date,]
+    } else if(!is.null(month)){
+      month_map=setNames(1:12,month.name)
+      month_num=month_map[[month]]
+      start_date=as.Date(sprintf("%d-%02d-01",year,month_num))
+      end_date=as.Date(sprintf("%d-%02d-%02d",year,month_num, 
+                                as.integer(format(as.Date(sprintf("%d-%02d-01",year,month_num))+months(1)-1,"%d"))))
+      asset_report=combined_asset_data[combined_asset_data$`Balance Sheet Date`>=start_date &
+                                        combined_asset_data$`Balance Sheet Date`<=end_date,]
+    }
+    #Reset row names
+    rownames(asset_report)=NULL
+    if(company=="Schneider Electric"){
+      #Find the index of "Plant Name"
+      plant_col_idx=which(colnames(asset_report)=="Plant Name")
+      #Create a new column "MJ1/MJ2" initialized with NA
+      new_col=rep(NA,nrow(asset_report))
+      #Insert the new column after "Plant Name"
+      asset_report=cbind(asset_report[,1:plant_col_idx,drop=FALSE],`MJ1/MJ2`=new_col,
+                          asset_report[,(plant_col_idx+1):ncol(asset_report),drop=FALSE])
+    }
+    effective_dates_file_path=paste0(directory,"Programs/Asset Tracking/Asset Tracking Effective Dates.xlsx")
+    #Check if file exists first
+    if(file.exists(effective_dates_file_path)){
+      effective_dates=read_excel(effective_dates_file_path)
+    } else{
+      stop("File does not exist: ",effective_dates_file_path)
+    }
+    #Filter effective_dates for the selected company
+    effective_dates_sub=effective_dates[effective_dates$Company==company,]
+    #Get unique plant locations for this company
+    plant_locations=sort(unique(effective_dates_sub$`Plant Location`))
+    #Create empty asset_tracking data frame with the columns
+    column_names=c("Asset Class","Asset Class Description",plant_locations)
+    asset_tracking=data.frame(matrix(ncol=length(column_names),nrow=0))
+    colnames(asset_tracking)=column_names
+    #List of asset class descriptions
+    asset_classes=c("0","Asset Under Construction","Construction on Other Land",
+                    "Construction on Owned Property","Improvements and Fixtures of Constructions","Land",
+                    "Land Improvement & Fixtures","Leasehold Improvement & Fixtures",
+                    "Conventional Equipment and Instalations (MIC)","Conventional Industrial Tools",
+                    "Data Processing & Office Automation Equipment","Equis and Installations Sensitive to Tech Changes",
+                    "Office Equipment & Social Equipment","Other Computarized Equipment and Installations",
+                    "Other Tangible Asset","Research & Development Cost Electronics",
+                    "Research & Development Cost Hardware Electronics","Special Tools","Transportation Equipment",
+                    "Licenses","Other Intangible Assets","Software","Intangible Assets (not an Asset Class per se)",
+                    "TOTAL","Assets Under Construction","ELIGIBLE REAL PROPERTY","ELIGIBLE PERSONAL PROPERTY")
+    #Get plant columns from existing asset_tracking
+    plant_columns=setdiff(colnames(asset_tracking),c("Asset Class","Asset Class Description"))
+    #Combine all column names
+    all_cols=c("Asset Class","Asset Class Description",plant_columns)
+    #Create empty data frame with correct number of rows and columns
+    asset_tracking=data.frame(matrix(NA,ncol=length(all_cols),nrow=length(asset_classes)))
+    #Assign column names
+    colnames(asset_tracking)=all_cols
+    #Fill "Asset Class Description" column
+    asset_tracking$`Asset Class Description`=asset_classes
+    #Initialize "Asset Class" column to NA (or 0 if preferred)
+    asset_tracking$`Asset Class`=NA
+    #Initialize all plant columns to NA (already NA from matrix, safe)
+    for(col in plant_columns){
+      asset_tracking[[col]]=NA
+    }
+    #Assign values to specific rows in "Asset Class"
+    asset_tracking$`Asset Class`[1]="Assets Under Construction"
+    asset_tracking$`Asset Class`[3]="Real Property"
+    asset_tracking$`Asset Class`[9]="Personal Property"
+    asset_tracking$`Asset Class`[20]="Intangible Assets"
+    #Determine period end date
+    if(!is.null(month) && is.null(quarter)){
+      month_num=match(tolower(month),tolower(month.name))
+      period_end=ceiling_date(as.Date(sprintf("%04d-%02d-01",year,month_num)),"month")-days(1)
+    } else if(!is.null(quarter) && is.null(month)){
+      end_month=c(3,6,9,12)[quarter]
+      period_end=as.Date(sprintf("%04d-%02d-%02d",year,end_month,days_in_month(as.Date(sprintf("%04d-%02d-01",year,end_month)))))
+    } else{
+      stop("Provide either month OR quarter")
+    }
+    sheet_name=format(period_end,"%m.%d.%Y")
+    #Replace sheet
+    if(sheet_name %in% names(wb)){
+      removeWorksheet(wb,sheet_name)
+    }
+    addWorksheet(wb,sheet_name,tabColour="#B3EBFF")
+    #Determine starting row for asset_report
+    start_row=nrow(asset_tracking)+8
+    asset_idx=which(names(asset_report)=="Asset")
+    if(length(asset_idx)==1){
+      #Force column to character BEFORE writing
+      asset_report[[asset_idx]]=as.character(asset_report[[asset_idx]])
+    }
+    #Write asset_report to the same sheet
+    writeData(wb,sheet=sheet_name,x=asset_report,startRow=start_row,startCol=1,colNames=TRUE) #Include column headers
+    #Example: table_data is the data frame you are writing starting at start_row
+    table_data=asset_report 
+    num_rows=nrow(table_data)
+    num_cols=ncol(table_data)
+    if(company=="Schneider Electric"){
+      #Find column indices
+      plant_col_idx=which(colnames(asset_report)=="Plant Name")
+      desc_col_idx=which(colnames(asset_report)=="Description")
+      mj_col_idx=which(colnames(asset_report)=="MJ1/MJ2")
+      #Convert to Excel column letters
+      plant_col_letter=int2col(plant_col_idx)
+      desc_col_letter=int2col(desc_col_idx)
+      #Write formula row by row in the MJ1/MJ2 column
+      end_row=nrow(asset_report)+2
+      for(r in start_row+1:end_row){
+        formula=sprintf('=IF(%s%d="Mt Juliet",IF(ISNUMBER(SEARCH("Mt. Juliet 2",%s%d)),"Mt Juliet 2","Mt Juliet 1"),%s%d)',
+                        plant_col_letter,r,desc_col_letter,r,plant_col_letter,r)
+        writeFormula(wb,sheet=sheet_name,x=formula,startCol=mj_col_idx,startRow=r)
+      }
+    }
+    #Bold header row
+    header_style=createStyle(textDecoration="bold")
+    addStyle(wb,sheet=sheet_name,style=header_style,rows=start_row,cols=1:num_cols,gridExpand=TRUE)
+    #Add filters
+    addFilter(wb,sheet=sheet_name,rows=start_row,cols=1:num_cols)
+    #Balance Sheet Date styling
+    bsd_col=which(colnames(table_data)=="Balance Sheet Date")
+    if(length(bsd_col)==1){
+      #Header
+      bsd_header_style=createStyle(fgFill="#000000",fontColour="#FFFFFF")
+      addStyle(wb,sheet=sheet_name,style=bsd_header_style,rows=start_row,cols=bsd_col,stack=TRUE)
+      #Body
+      bsd_body_style=createStyle(fgFill="#BFBFBF",numFmt="mmm-yy")
+      addStyle(wb,sheet=sheet_name,style=bsd_body_style,rows=(start_row+1):(start_row+num_rows),cols=bsd_col,
+              gridExpand=TRUE,stack=TRUE)
+    }
+    #Find the column index for "MJ1/MJ2"
+    mj_col_idx=which(colnames(asset_report)=="MJ1/MJ2")
+    if(length(mj_col_idx)==1){
+      #Header style: purple background, white text
+      mj_header_style=createStyle(fgFill="#7030A0",fontColour="#FFFFFF")
+      addStyle(wb,sheet=sheet_name,style=mj_header_style,rows=start_row,cols=mj_col_idx,gridExpand=TRUE,stack=TRUE)
+      #Body style: light purple fill
+      mj_body_style=createStyle(fgFill="#E4D2F2")
+      addStyle(wb,sheet=sheet_name,style=mj_body_style,rows=(start_row+1):(start_row+num_rows),cols=mj_col_idx,
+                gridExpand=TRUE,stack=TRUE)
+    }
+    #Special columns
+    cols_to_format=c("Plant Name","Profit Center","Plant Code","Asset Class Name")
+    col_idx=which(names(table_data) %in% cols_to_format)
+    if(length(col_idx)>0){
+      header_style=createStyle(fgFill="#806000",fontColour="#FFFFFF")
+      body_style=createStyle(fgFill="#FFF2CC")
+      addStyle(wb,sheet=sheet_name,style=header_style,rows=start_row,cols=col_idx,gridExpand=TRUE,stack=TRUE)
+      addStyle(wb,sheet=sheet_name,style=body_style,rows=(start_row+1):(start_row+num_rows),cols=col_idx,
+              gridExpand=TRUE,stack=TRUE)
+    }
+    #Other columns (orange)
+    special_cols=c("Balance Sheet Date","Plant Name","MJ1/MJ2","Profit Center","Plant Code","Asset Class Name","Plant")
+    other_cols=setdiff(names(table_data),special_cols)
+    other_idx=which(names(table_data) %in% other_cols)
+    plant_idx=which(names(table_data)=="Plant")
+    header_orange=createStyle(fgFill="#ED7D31",fontColour="#FFFFFF")
+    header_plant=createStyle(fgFill="#548235",fontColour="#FFFFFF")
+    if(length(other_idx)>0){
+      addStyle(wb,sheet=sheet_name,style=header_orange,rows=start_row,cols=other_idx,gridExpand=TRUE,stack=TRUE)
+    }
+    if(length(plant_idx)==1){
+      addStyle(wb,sheet=sheet_name,style=header_plant,rows=start_row,cols=plant_idx,gridExpand=TRUE,stack=TRUE)
+    }
+    #Columns to format as dates
+    date_cols=c("Capitalization Date","Acquisition Date")
+    for(col_name in date_cols){
+      col_idx=which(names(table_data)==col_name)
+      if(length(col_idx)==1){
+        date_style=createStyle(numFmt="DATE")
+        addStyle(wb,sheet=sheet_name,style=date_style,rows=(start_row+1):(start_row+num_rows),cols=col_idx,
+                  gridExpand=TRUE,stack=TRUE)
+      }
+    }
+    #Accounting columns
+    acct_cols=c("Acquisition Value","Accumulated Depreciation","Book Value")
+    acct_idx=which(names(table_data) %in% acct_cols)
+    if(length(acct_idx)>0){
+      acct_style=createStyle(numFmt="ACCOUNTING")
+      addStyle(wb,sheet=sheet_name,style=acct_style,rows=(start_row+1):(start_row+num_rows),cols=acct_idx,
+                gridExpand=TRUE,stack=TRUE)
+    }
+    #Asset column as text
+    asset_idx=which(names(table_data)=="Asset")
+    if(length(asset_idx)==1){
+      text_style=createStyle(numFmt="@")
+      addStyle(wb,sheet=sheet_name,style=text_style,rows=(start_row+1):(start_row+num_rows),cols=asset_idx,
+                gridExpand=TRUE,stack=TRUE)
+    }
+    start_col=ncol(asset_report)-ncol(asset_tracking)+1
+    writeData(wb,sheet=sheet_name,x=asset_tracking,startRow=2,startCol=start_col)
+    #Write Effective Date row (row 1) directly
+    cols=colnames(asset_tracking)
+    #Create DATE style
+    date_style=createStyle(numFmt="DATE",fgFill="#FFFF00")
+    #Column index for Asset Class Description
+    desc_col=which(cols=="Asset Class Description")+start_col
+    writeData(wb,sheet=sheet_name,x="Effective Date:",startRow=1,startCol=desc_col,colNames=FALSE)
+    #Yellow fill style for label
+    label_style=createStyle(fgFill="#FFFF00")
+    #Apply style
+    addStyle(wb,sheet=sheet_name,style=label_style,rows=1,cols=desc_col,gridExpand=FALSE,stack=TRUE)
+    #Map plant location -> effective date
+    plant_date_map=setNames(effective_dates_sub$`Effective Date`,effective_dates_sub$`Plant Location`)
+    plant_cols=setdiff(cols,c("Asset Class","Asset Class Description"))
+    for(col in plant_cols){
+      if(col %in% names(plant_date_map)){
+        col_index=which(cols==col)
+        writeData(wb,sheet=sheet_name,x=plant_date_map[col],startRow=1,startCol=col_index+start_col-1,colNames=FALSE)
+        #Apply DATE format to that cell
+        addStyle(wb,sheet=sheet_name,style=date_style,rows=1,cols=col_index+start_col-1,gridExpand=FALSE,stack=TRUE)
+      }
+    }
+    #Determine last column based on asset_tracking width
+    last_col=start_col+ncol(asset_tracking)-1
+    #Header style (bold + fill)
+    header_style=createStyle(textDecoration="bold",fgFill="#DDEBF7")
+    #Apply to entire header row (row 2)
+    addStyle(wb,sheet=sheet_name,style=header_style,rows=2,cols=start_col:last_col,gridExpand=TRUE,stack=TRUE)
+    #Columns to bold
+    cols_to_bold=which(colnames(asset_tracking) %in% c("Asset Class","Asset Class Description"))+start_col-1
+    #Rows covering the asset_tracking data body
+    data_rows=3:(nrow(asset_tracking)+2)
+    #Bold style
+    bold_style=createStyle(textDecoration="bold")
+    #Apply style
+    addStyle(wb,sheet=sheet_name,style=bold_style,rows=data_rows,cols=cols_to_bold,gridExpand=TRUE,stack=TRUE)
+    #Target descriptions
+    target_desc=c("Licenses","Other Intangible Assets","Software")
+    #Column index for Asset Class Description
+    desc_col=which(colnames(asset_tracking)=="Asset Class Description")+start_col-1
+    #Find matching rows in asset_tracking
+    match_rows=which(asset_tracking$`Asset Class Description` %in% target_desc)
+    #Convert to Excel row numbers (data starts at row 3)
+    excel_rows=match_rows+2
+    #Red text style
+    red_text_style=createStyle(fontColour="#C00000")
+    #Apply style
+    addStyle(wb,sheet=sheet_name,style=red_text_style,rows=excel_rows,cols=desc_col,gridExpand=TRUE,stack=TRUE)
+    #Column index for Asset Class (prefer "Asset Class Name" if present)
+    asset_col_name=if("Asset Class Name" %in% colnames(asset_report)){
+      "Asset Class Name"
+    } else if("Asset Class" %in% colnames(asset_report)){
+      "Asset Class"
+    } else{
+      stop("Neither 'Asset Class Name' nor 'Asset Class' found in asset_tracking")
+    }
+    asset_col=which(colnames(asset_report)==asset_col_name)+start_col
+    #Data rows in Excel (data starts at row 3)
+    data_rows=3:(nrow(asset_tracking)+2)
+    #Styles
+    fill_grey=createStyle(fgFill="#F2F2F2")
+    top_border_style=createStyle(border="top",borderColour="#000000")
+    #Determine which rows have text in Asset Class
+    text_rows=which(!is.na(asset_tracking$`Asset Class`) & asset_tracking$`Asset Class`!="")
+    excel_text_rows=text_rows+2 #Adjust for Excel row numbers
+    #Alternating fill logic
+    fill_flag=TRUE #Start with grey
+    for(i in seq_along(excel_text_rows)){
+      start_row=excel_text_rows[i]
+      end_row=if(i<length(excel_text_rows)) excel_text_rows[i+1]-1 else max(data_rows)
+      if(fill_flag){
+        addStyle(wb,sheet=sheet_name,style=fill_grey,rows=start_row:end_row,cols=start_col:ncol(asset_report),
+                  gridExpand=TRUE,stack=TRUE)
+      }
+      #Top border on the starting row of the section
+      addStyle(wb,sheet=sheet_name,style=top_border_style,rows=start_row,cols=start_col:ncol(asset_report),
+                gridExpand=TRUE,stack=TRUE)
+      #Flip fill for next section
+      fill_flag=!fill_flag
+    }
+    #Column index for first column
+    first_col=start_col
+    #Rows covering the table
+    table_rows=3:(nrow(asset_tracking)+2) #Adjust for Excel row numbers
+    #Create style for right border
+    right_border_style=createStyle(border="right",borderColour="#000000")
+    #Apply the right border down the first column
+    addStyle(wb,sheet=sheet_name,style=right_border_style,rows=table_rows,cols=first_col,gridExpand=TRUE,stack=TRUE)
+    #Column index for "Asset Class Description"
+    desc_col=which(colnames(asset_tracking)=="Asset Class Description")
+    #Find the row where Asset Class Description == "TOTAL"
+    total_row=which(asset_tracking$`Asset Class Description`=="TOTAL")
+    if(length(total_row)==1){
+      #Excel row number adjustment (data starts at row 3)
+      excel_total_row=total_row+2
+      #Columns from Asset Class Description to last column
+      cols_total=desc_col:ncol(asset_tracking)+start_col-1
+      #Create styles
+      top_border_style=createStyle(border="top",borderColour="#0070C0") #Blue color
+      bottom_double_border_style=createStyle(border="bottom",borderStyle="double",borderColour="#0070C0")
+      #Apply top border
+      addStyle(wb,sheet=sheet_name,style=top_border_style,rows=excel_total_row,cols=cols_total,gridExpand=TRUE,stack=TRUE)
+      #Apply bottom double border
+      addStyle(wb,sheet=sheet_name,style=bottom_double_border_style,rows=excel_total_row,cols=cols_total,
+                gridExpand=TRUE,stack=TRUE)
+    }
+    #Column indices in asset_report
+    acq_col_idx=which(colnames(asset_report)=="Acquisition Value")
+    mj_col_idx=which(colnames(asset_report)=="MJ1/MJ2")
+    #Prefer "Asset Class Name", else "Asset Class"
+    if("Asset Class Name" %in% colnames(asset_report)){
+      acname_col_idx=which(colnames(asset_report)=="Asset Class Name")
+    } else if("Asset Class" %in% colnames(asset_report)) {
+      acname_col_idx=which(colnames(asset_report)=="Asset Class")
+    } else {
+      stop("Neither 'Asset Class Name' nor 'Asset Class' column found in asset_report")
+    }
+    desc_col_idx=which(colnames(asset_report)=="Description")
+    cap_date_col_idx=which(colnames(asset_report)=="Capitalization Date")
+    #Convert to Excel letters
+    acq_col_letter=int2col(acq_col_idx) #Sum range
+    mj_col_letter=int2col(mj_col_idx) #Criteria_range1
+    acname_col_letter=int2col(acname_col_idx) #Criteria_range2
+    desc_col_letter=int2col(desc_col_idx) #Criteria_range3
+    cap_date_col_letter=int2col(cap_date_col_idx) #Criteria_range4
+    header_row=start_row #Row 2, your header
+    data_start_row=3
+    data_end_row=nrow(asset_tracking)-2
+    #The column where formulas start (e.g., start_col+2)
+    formula_start_col=start_col+2
+    formula_end_col=ncol(asset_report) #or however many formula columns
+    date_row=1
+    location_row=2
+    difference=1
+    for(c in formula_start_col:formula_end_col){
+      formula_col_letter=int2col(c)
+      description_col=c-difference
+      description_col_letter=int2col(description_col)
+      for(r in data_start_row:data_end_row){
+        #Build the SUMIFS formula matching your example
+        formula=sprintf('=SUMIFS($%s:$%s,$%s:$%s,%s$%d,$%s:$%s,$%s%d,$%s:$%s,">=" & %s$%d)',
+                        acq_col_letter,acq_col_letter, #Acquisition Value
+                        mj_col_letter,mj_col_letter, #MJ1/MJ2
+                        formula_col_letter,location_row, #Location header row
+                        acname_col_letter,acname_col_letter, #Asset Class Name
+                        description_col_letter,r, #Asset Class Description in this row
+                        cap_date_col_letter,cap_date_col_letter, #Capitalization Date
+                        formula_col_letter,date_row) #Capitalization Date header row
+        writeFormula(wb,sheet=sheet_name,x=formula,startCol=c,startRow=r)
+      }
+      difference=difference+1
+    }
+    #Column indices
+    class_col=formula_start_col-2
+    desc_col=formula_start_col-1
+    desc_col_letter=int2col(desc_col)
+    #Find TOTAL row in asset_tracking (table coordinates)
+    total_row_tbl=which(asset_tracking[["Asset Class Description"]]=="TOTAL")
+    excel_total_row=total_row_tbl+2
+    #Loop across numeric columns
+    for(c in formula_start_col:ncol(asset_report)){
+      col_letter=int2col(c)
+      formula=sprintf("=SUM(%s3:%s%d)",col_letter,col_letter,excel_total_row-1)
+      writeFormula(wb,sheet=sheet_name,x=formula,startCol=c,startRow=excel_total_row)
+    }
+    auc_total_row_tbl=which(asset_tracking[["Asset Class Description"]]=="Assets Under Construction")
+    excel_auc_total_row=auc_total_row_tbl+2
+    real_total_row_tbl=which(asset_tracking[["Asset Class Description"]]=="ELIGIBLE REAL PROPERTY")
+    excel_real_total_row=real_total_row_tbl+2
+    personal_total_row_tbl=which(asset_tracking[["Asset Class Description"]]=="ELIGIBLE PERSONAL PROPERTY")
+    excel_personal_total_row=personal_total_row_tbl+2
+    #Find group header rows in Asset Class column
+    group_labels=c("Assets Under Construction","Real Property","Personal Property","Intangible Assets")
+    group_rows_tbl=sapply(group_labels,function(lbl){
+      which(asset_tracking[["Asset Class"]]==lbl)
+    })
+    names(group_rows_tbl)=group_labels
+    #Add TOTAL row
+    group_rows_tbl["TOTAL"]=total_row_tbl
+    #Sort rows but keep labels
+    group_rows_tbl=group_rows_tbl[order(group_rows_tbl)]
+    #Map ELIGIBLE rows in Excel
+    eligible_map=c("Assets Under Construction"=excel_auc_total_row,"Real Property"=excel_real_total_row,
+                    "Personal Property"=excel_personal_total_row)
+    #Write formulas
+    labels_sorted=names(group_rows_tbl)
+    for(i in seq_along(labels_sorted)){
+      lbl=labels_sorted[i]
+      #Only do 3 eligible sections
+      if(!(lbl %in% names(eligible_map))) next
+      start_tbl=group_rows_tbl[lbl]
+      #Next header row (or TOTAL)
+      next_tbl=group_rows_tbl[i+1]
+      #Excel rows
+      start_excel=start_tbl+2
+      end_excel=next_tbl+1 #tbl+2 then -1
+      target_excel_row=eligible_map[lbl]
+      for(c in formula_start_col:ncol(asset_report)){
+        col_letter=int2col(c)
+        formula=sprintf("=SUM(%s%d:%s%d)",col_letter,start_excel,col_letter,end_excel)
+        writeFormula(wb,sheet=sheet_name,x=formula,startCol=c,startRow=target_excel_row)
+      }
+    }
+    #Column range for numeric area
+    num_start_col=formula_start_col
+    num_end_col=formula_start_col+ncol(asset_tracking)-2
+    #Row range (Excel rows)
+    num_start_row=3
+    num_end_row=nrow(asset_tracking)+3
+    #Accounting style
+    acct_style=createStyle(numFmt="ACCOUNTING")
+    #Apply
+    addStyle(wb,sheet=sheet_name,style=acct_style,rows=num_start_row:num_end_row,cols=num_start_col:num_end_col,
+              gridExpand=TRUE,stack=TRUE)
+    message("Asset Report sheet updated.")
+    sheet_name_capex="CapEx Tracking"
+    capex_header_row=5
+    #Check if file exists
+    if(file.exists(file_path)){
+      #If sheet exists → read it
+      if(sheet_name_capex %in% names(wb)){
+        capex_tracking=readWorkbook(file_path,sheet=sheet_name_capex,startRow=capex_header_row,detectDates=FALSE,
+                                    check.names=FALSE)
+        #Restore spaces in column names
+        names(capex_tracking)=gsub("\\."," ",names(capex_tracking))
+        excel_serial_to_text_date=function(x){
+          num=suppressWarnings(as.numeric(x))
+          is_excel_date=!is.na(num) & num>20000 & num<60000
+          out=x
+          if(any(is_excel_date)){
+            d=as.Date(num[is_excel_date],origin="1899-12-30")
+            txt=format(d,"%m/%d/%Y")
+            txt=sub("^0","",txt)
+            txt=sub("/0","/",txt)
+            out[is_excel_date]=txt
+          }
+          out
+        }
+        fix_capex=function(x){
+          num=suppressWarnings(as.numeric(x))
+          is_num=!is.na(num)
+          out=x
+          out[is_num]=format(num[is_num],scientific=FALSE,trim=TRUE)
+          out
+        }
+        capex_tracking=capex_tracking%>%mutate(across(everything(),as.character))%>%
+                                        mutate(`Start Date`=excel_serial_to_text_date(`Start Date`),
+                                                `End Date`=excel_serial_to_text_date(`End Date`),
+                                                `CapEx Commitment`=fix_capex(`CapEx Commitment`))
+        #Unzip workbook
+        temp_dir=tempdir()
+        unzip(file_path,exdir=temp_dir)
+        #Read workbook + rels
+        workbook_xml=read_xml(file.path(temp_dir,"xl/workbook.xml"))
+        rels_xml=read_xml(file.path(temp_dir,"xl/_rels/workbook.xml.rels"))
+        ns_wb=xml_ns(workbook_xml)
+        ns_rels=xml_ns(rels_xml)
+        #Locate sheet
+        sheet_node=xml_find_first(workbook_xml,paste0(".//d1:sheet[@name='",sheet_name_capex,"']"),ns_wb)
+        if(is.na(sheet_node)){
+          stop("Sheet not found.")
+        }
+        r_id=xml_attr(sheet_node,"id")
+        rel_node=xml_find_first(rels_xml,paste0(".//d1:Relationship[@Id='",r_id,"']"),ns_rels)
+        sheet_file=xml_attr(rel_node,"Target")
+        sheet_path=file.path(temp_dir,"xl",sheet_file)
+        sheet_xml=read_xml(sheet_path)
+        ns_sheet=xml_ns(sheet_xml)
+        #Shared strings
+        shared_path=file.path(temp_dir,"xl/sharedStrings.xml")
+        shared_strings=NULL
+        if(file.exists(shared_path)){
+          shared_xml=read_xml(shared_path)
+          ns_shared=xml_ns(shared_xml)
+          shared_strings=xml_text(xml_find_all(shared_xml,".//d1:si//d1:t",ns_shared))
+        }
+        #Rows
+        rows=xml_find_all(sheet_xml,".//d1:row",ns_sheet)
+        row_nums=as.integer(xml_attr(rows,"r"))
+        rows_keep=rows[row_nums>=capex_header_row]
+        #Extract cells
+        cell_list=lapply(rows_keep,function(row_node){
+          cells=xml_find_all(row_node,".//d1:c",ns_sheet)
+          if(length(cells)==0) return(NULL)
+          refs=xml_attr(cells,"r")
+          cols=str_extract(refs,"[A-Z]+")
+          rows=as.integer(str_extract(refs,"\\d+"))
+          types=xml_attr(cells,"t")
+          formulas=sapply(cells,function(cell){
+            f=xml_find_first(cell,".//d1:f",ns_sheet)
+            if(length(f)==0) NA_character_ else xml_text(f)
+          })
+          values=sapply(seq_along(cells),function(i){
+            v=xml_find_first(cells[[i]],".//d1:v",ns_sheet)
+            if(length(v)==0) return(NA_character_)
+            val=xml_text(v)
+            if(!is.null(shared_strings) && !is.na(types[i]) &&types[i]=="s"){
+              return(shared_strings[as.integer(val)+1])
+            }
+            val
+          })
+          tibble(row=rows,col=cols,formula=formulas,value=values)
+        })
+        cell_df=bind_rows(cell_list)
+        #Choose formula else value
+        cell_df=cell_df%>%mutate(content=ifelse(!is.na(formula),paste0("=",formula),value))
+        #Build grid
+        grid=cell_df%>%select(row,col,content)%>%pivot_wider(names_from=col,values_from=content)%>%arrange(row)
+        header=grid%>%dplyr::filter(row==capex_header_row)
+        data=grid%>%dplyr::filter(row>capex_header_row)
+        #Set column names from header row (excluding row column if present)
+        header_vals=header[1,]
+        header_vals=header_vals[,colnames(header_vals)!="row",drop=FALSE]
+        colnames(data)=colnames(header_vals)
+        #Remove row column only if it exists
+        if("row" %in% names(data)){
+          data=data%>%dplyr::select(-row)
+        }
+        result=data
+        #Remove column A (first column in Excel)
+        if(ncol(result)>0){
+          result=result[,-1,drop=FALSE]
+        }
+        #Rename columns to match capex_tracking
+        common_n=min(ncol(result),ncol(capex_tracking))
+        colnames(result)[1:common_n]=colnames(capex_tracking)[1:common_n]
+      } else{
+        #Sheet doesn't exist → create empty dataframe
+        capex_tracking=data.frame(State=character(),`Facility Address`=character(),`Plant Location`=character(),
+                                  Incentive=character(),`CapEx Commitment`=numeric(),`Eligible Expenditures`=numeric(),
+                                  `Start Date`=as.Date(character()),`End Date`=as.Date(character()),stringsAsFactors=FALSE)
+        #Restore spaces in column names
+        names(capex_tracking)=gsub("\\."," ",names(capex_tracking))
+      }
+    } else{
+      #File doesn't exist → create dataframe
+      capex_tracking=data.frame(State=character(),`Facility Address`=character(),`Plant Location`=character(),
+                                Incentive=character(),`CapEx Commitment`=numeric(),`Eligible Expenditures`=numeric(),
+                                `Start Date`=as.Date(character()),`End Date`=as.Date(character()),stringsAsFactors=FALSE)
+      #Restore spaces in column names
+      names(capex_tracking)=gsub("\\."," ",names(capex_tracking))
+    }
+    #Helper: month name → number
+    month_map=c(January=1,February=2,March=3,April=4,May=5,June=6,July=7,August=8,September=9,October=10,November=11,
+                December=12)
+    #Determine months to create
+    months_to_add=c()
+    if(!is.null(month)){
+      m_num=month_map[[month]]
+      months_to_add=m_num
+    } else if(!is.null(quarter)){
+      q_start=(quarter-1)*3+1
+      months_to_add=q_start:(q_start+2)
+    }
+    #Create column names like "Jan-24"
+    period_cols=format(as.Date(sprintf("%d-%02d-01",year,months_to_add)),"%b-%y")
+    #Add columns safely even if 0 rows
+    for(col in period_cols){
+      if(!(col %in% names(capex_tracking))){
+        capex_tracking[[col]]=rep(NA,nrow(capex_tracking))
+      }
+    }
+    #Columns that contain Alt+Enter line breaks
+    expand_cols=c("Incentives","CapEx Commitment","Eligible Expenditures","Expenditure Type","Incentive Start Date",
+                  "Incentive End Date")
+    #Ensure columns exist
+    expand_cols=intersect(expand_cols,names(effective_dates_sub))
+    effective_dates_expanded=effective_dates_sub%>%mutate(across(all_of(expand_cols),~ifelse(is.na(.x)|.x=="",
+                                                          NA,str_split(.x,"\\r?\\n|\\r"))))%>%
+                                                          unnest(cols=all_of(expand_cols),keep_empty=TRUE)
+    #Align effective_dates_expanded to capex_tracking structure
+    effective_aligned=effective_dates_expanded%>%transmute(State=State,`Facility Address`=Address,
+                                                            `Plant Location`=`Plant Location`,Incentive=Incentives,
+                                                            `CapEx Commitment`=`CapEx Commitment`,
+                                                            `Eligible Expenditures`=`Eligible Expenditures`,
+                                                            `Start Date`=`Incentive Start Date`,
+                                                            `End Date`=`Incentive End Date`)
+    #Convert EVERYTHING to character in both
+    capex_chr=capex_tracking%>%mutate(across(everything(),~as.character(.)))
+    effective_chr=effective_aligned%>%mutate(across(everything(),~as.character(.)))
+    #Trim whitespace
+    capex_chr=capex_chr%>%mutate(across(everything(),~trimws(.)))
+    effective_chr=effective_chr%>%mutate(across(everything(),~trimws(.)))
+    #Find rows not already present
+    rows_to_add=effective_chr%>%anti_join(capex_chr,by=c("State","Facility Address","Incentive","CapEx Commitment",
+                                                          "Eligible Expenditures","Start Date","End Date"))
+    #Append back (still character-safe)
+    if(nrow(rows_to_add)>0){
+      capex_chr=bind_rows(capex_chr,rows_to_add)
+    }
+    #Convert back to original types if desired
+    capex_tracking=capex_chr
+    capex_tracking=capex_tracking%>%mutate(across(everything(),~trimws(as.character(.))))%>% #Normalize
+      filter(if_any(everything(),~!is.na(.) & .!="" & .!="NA"))
+    capex_tracking=capex_tracking%>%mutate(`CapEx Commitment`=trimws(`CapEx Commitment`),
+                                            `CapEx Commitment`=na_if(`CapEx Commitment`,""),
+                                            `CapEx Commitment`=na_if(`CapEx Commitment`,"NA"),
+                                            `CapEx Commitment`=suppressWarnings(as.numeric(`CapEx Commitment`)))
+    capex_tracking=capex_tracking%>%
+      #Temporarily normalize blanks and literal "NA" to a placeholder
+      mutate(across(c(`State`,`Facility Address`,`Plant Location`,`Incentive`,`CapEx Commitment`,
+                      `Eligible Expenditures`),~ifelse(.==""|.=="NA","__NA_BLANK__",.)))%>%
+      #Remove duplicates based on these columns
+      distinct(`State`,`Facility Address`,`Plant Location`,`Incentive`,`CapEx Commitment`,`Eligible Expenditures`,
+                .keep_all=TRUE)%>%
+      #Restore the placeholder back to blank (or "NA" if you prefer)
+      mutate(across(c(`State`,`Facility Address`,`Plant Location`,`Incentive`,`CapEx Commitment`,
+                      `Eligible Expenditures`),~ifelse(.=="__NA_BLANK__","",.)))
+    #If file exists, load it; otherwise create new workbook
+    if(file.exists(file_path)){
+      #Remove existing "CapEx Tracking" sheet if it already exists
+      if("CapEx Tracking" %in% names(wb)){
+        removeWorksheet(wb,"CapEx Tracking")
+      }
+    }
+    #Add new sheet
+    addWorksheet(wb,"CapEx Tracking",tabColour="#7030A0")
+    #Write data
+    capex_tracking$`CapEx Commitment`=as.numeric(capex_tracking$`CapEx Commitment`)
+    writeData(wb,sheet="CapEx Tracking",x=capex_tracking,startRow=capex_header_row,startCol=1)
+    freezePane(wb,sheet="CapEx Tracking",firstActiveRow=capex_header_row+1,firstActiveCol=5)
+    #Header row index
+    num_cols=ncol(capex_tracking)
+    #Bold header style
+    header_style=createStyle(textDecoration="bold")
+    #Apply bold to header row
+    addStyle(wb,sheet="CapEx Tracking",style=header_style,rows=capex_header_row,cols=1:num_cols,gridExpand=TRUE,stack=TRUE)
+    #Add filters to header row
+    addFilter(wb,sheet="CapEx Tracking",rows=capex_header_row,cols=1:num_cols)
+    #Find columns with "MMM-YY" format
+    date_col_pattern="^[A-Za-z]{3}-\\d{2}$"
+    period_cols_idx=which(grepl(date_col_pattern,names(capex_tracking)))
+    #Include "CapEx Commitment" column
+    acct_cols_idx=c(which(names(capex_tracking)=="CapEx Commitment"),period_cols_idx)
+    if(length(acct_cols_idx)>0){
+      #Create ACCOUNTING style
+      acct_style=createStyle(numFmt="ACCOUNTING")
+      #Apply style to all relevant columns
+      addStyle(wb,sheet="CapEx Tracking",style=acct_style,rows=(capex_header_row+1):(capex_header_row+nrow(capex_tracking)),
+                cols=acct_cols_idx,gridExpand=TRUE,stack=TRUE)
+    }
+    #Write the values to A1 and B1
+    writeData(wb,sheet="CapEx Tracking",x=company,startCol=1,startRow=1,colNames=FALSE)
+    writeData(wb,sheet="CapEx Tracking",x="CapEx Tracking",startCol=1,startRow=2,colNames=FALSE)
+    #Create bold text style
+    bold_style=createStyle(textDecoration="bold")
+    #Apply style to both cells
+    addStyle(wb,sheet="CapEx Tracking",style=bold_style,rows=1:2,cols=1,gridExpand=TRUE,stack=TRUE)
+    #Write "Complete" to A3
+    writeData(wb,sheet="CapEx Tracking",x="Complete",startCol=1,startRow=3,colNames=FALSE)
+    #Create style with green background
+    complete_style=createStyle(fgFill="#70AD47")
+    #Apply background fill to A3
+    addStyle(wb,sheet="CapEx Tracking",style=complete_style,rows=3,cols=1,gridExpand=TRUE,stack=TRUE)
+    #Determine first and last row of data
+    first_data_row=capex_header_row+1
+    last_data_row=capex_header_row+nrow(capex_tracking)
+    #Column A letter
+    col_letter="A"
+    #Build Excel formula
+    count_formula=sprintf("=COUNTA(%s%d:%s%d)",col_letter,first_data_row,col_letter,last_data_row)
+    #Write formula to cell A4
+    writeFormula(wb,sheet="CapEx Tracking",x=count_formula,startCol=1,startRow=capex_header_row-1)
+    #Header row
+    col_names=colnames(capex_tracking)
+    all_cols=1:ncol(capex_tracking)
+    #Identify "MMM-YY" columns
+    mmm_yy_cols=grep("^[A-Za-z]{3}-\\d{2}$",col_names)
+    other_cols=setdiff(all_cols,mmm_yy_cols)
+    #Create styles
+    style_other=createStyle(fgFill="#F2F2F2")
+    style_mmm=createStyle(fgFill="#DDEBF7")
+    #Apply styles to header row only
+    if(length(other_cols)>0){
+      addStyle(wb,sheet="CapEx Tracking",style=style_other,rows=capex_header_row,cols=other_cols,gridExpand=TRUE,stack=TRUE)
+    }
+    if(length(mmm_yy_cols)>0){
+      addStyle(wb,sheet="CapEx Tracking",style=style_mmm,rows=capex_header_row,cols=mmm_yy_cols,gridExpand=TRUE,stack=TRUE)
+    }
+    #Determine the row above the header
+    label_row=capex_header_row-1
+    #First MMM-YY column
+    first_mmm_col=min(mmm_yy_cols)
+    #Write "CapEx Levels" above the first MMM-YY column and bold it
+    writeData(wb,sheet="CapEx Tracking",x="CapEx Levels",startCol=first_mmm_col,startRow=label_row,colNames=FALSE)
+    capex_label_style=createStyle(textDecoration="bold")
+    addStyle(wb,sheet="CapEx Tracking",style=capex_label_style,rows=label_row,cols=first_mmm_col,stack=TRUE)
+    #Fill background color for all MMM-YY columns in this label row
+    mmm_label_style=createStyle(fgFill="#9BC2E6")
+    addStyle(wb,sheet="CapEx Tracking",style=mmm_label_style,rows=label_row,cols=mmm_yy_cols,stack=TRUE)
+    #Find all "NA" strings in capex_tracking
+    na_positions=which(capex_tracking=="NA",arr.ind=TRUE) #Gives row & col indices
+    #Loop through positions and clear the cells in Excel
+    for(i in seq_len(nrow(na_positions))){
+      row_excel=na_positions[i,"row"]+capex_header_row #Offset by header row
+      col_excel=na_positions[i,"col"]
+      writeData(wb,sheet="CapEx Tracking",x="",startRow=row_excel,startCol=col_excel,colNames=FALSE)
+    }
+    capex_sheet_name="CapEx Tracking"
+    asset_header_row=2
+    #MMM-YY → Last Day Sheet Name
+    mmm_to_sheet=function(mmm){
+      first=as.Date(paste0("01-",mmm),format="%d-%b-%y")
+      last=seq(first,by="1 month",length.out=2)[2]-1
+      format(last,"%m.%d.%Y")
+    }
+    #Asset Class Rows
+    auc_rows=which(grepl("Assets Under Construction",asset_tracking$`Asset Class Description`,ignore.case=TRUE))
+    real_rows=which(grepl("ELIGIBLE REAL PROPERTY",asset_tracking$`Asset Class Description`,ignore.case=TRUE))
+    pers_rows=which(grepl("ELIGIBLE PERSONAL PROPERTY",asset_tracking$`Asset Class Description`,ignore.case=TRUE))
+    #MMM-YY Columns
+    mmm_cols=grep("^[A-Z][a-z]{2}-\\d{2}$",names(capex_tracking),value=TRUE)
+    #Match Keys
+    match_cols=c("State","Facility Address","Plant Location","Incentive","CapEx Commitment","Eligible Expenditures",
+                  "Start Date","End Date")
+    capex_tracking$`CapEx Commitment`=format(capex_tracking$`CapEx Commitment`,scientific=FALSE,trim=TRUE)
+    capex_tracking$`CapEx Commitment`=as.character(capex_tracking$`CapEx Commitment`)
+    #Create Row Match Index
+    effective_key=effective_aligned%>%unite("key",all_of(match_cols),remove=FALSE)
+    capex_key=capex_tracking%>%unite("key",all_of(match_cols),remove=FALSE)
+    match_index=match(capex_key$key,effective_key$key)
+    #Normalize column names
+    normalize_colnames=function(df){
+      names(df)=trimws(names(df))
+      names(df)=gsub("\\s+"," ",names(df))
+      names(df)=gsub("CapE$","CapEx",names(df))
+      df
+    }
+    capex_tracking=normalize_colnames(capex_tracking)
+    if(!exists("result")) result=capex_tracking
+    result=normalize_colnames(result)
+    #Key columns
+    key_cols=c("State","Facility Address","Plant Location","Incentive","CapEx Commitment")
+    missing_cols=setdiff(key_cols,names(capex_tracking))
+    if(length(missing_cols)>0){
+      stop("Missing columns in capex_tracking: ",paste(missing_cols,collapse=", "))
+    }
+    #Month columns
+    if(!exists("mmm_cols")){
+      mmm_cols=names(capex_tracking)[grepl("^\\w{3}-\\d{2}$",names(capex_tracking))]
+    }
+    if(length(mmm_cols)==0) stop("No month-year columns found in capex_tracking.")
+    #Preview dataframe
+    formula_preview=capex_tracking[,key_cols,drop=FALSE]
+    formula_preview[,mmm_cols]=NA_character_
+    #Key normalization
+    normalize_val=function(x){
+      x=trimws(as.character(x))
+      ifelse(is.na(x)|x==""|x=="NA","<BLANK>",x)
+    }
+    #Build lookup
+    result_keys_norm=as.data.frame(lapply(result[,key_cols],normalize_val),stringsAsFactors=FALSE)
+    result_lookup_key=apply(result_keys_norm,1,paste,collapse="|")
+    result_lookup=setNames(seq_len(nrow(result)),result_lookup_key)
+    #Column indices
+    capex_col_indices=setNames(match(mmm_cols,names(capex_tracking)),mmm_cols)
+    #Track unmatched rows
+    unmatched_rows=list()
+    unmatched_idx=0
+    #Main loop
+    for(r in seq_len(nrow(capex_tracking))){
+      eff_r=match_index[r]
+      exp_type=effective_dates_expanded$`Expenditure Type`[eff_r]
+      if(is.na(exp_type)||trimws(exp_type)=="") next
+      use_auc=grepl("AUC",exp_type,ignore.case=TRUE)
+      use_real=grepl("Real",exp_type,ignore.case=TRUE)
+      use_pers=grepl("Personal",exp_type,ignore.case=TRUE)
+      rows=c(if(use_auc) auc_rows,if(use_real) real_rows,if(use_pers) pers_rows)
+      if(length(rows)==0) next
+      #Excel column letter
+      plant=capex_tracking$`Plant Location`[r]
+      asset_col_idx=which(names(asset_tracking)==plant)
+      excel_asset_col=ncol(asset_report)-ncol(asset_tracking)+asset_col_idx
+      excel_letter=int2col(excel_asset_col)
+      #Allowed MMM
+      if(!is.null(month) && nzchar(month)){
+        month_num=match(month,month.name)
+        if(is.na(month_num)) stop("Invalid month name")
+        allowed_mmm=format(as.Date(sprintf("%04d-%02d-01",year,month_num)),"%b-%y")
+      } else if(!is.null(quarter)){
+        if(!quarter %in% 1:4) stop("Quarter must be 1-4")
+        q_months=((quarter-1)*3+1):((quarter-1)*3+3)
+        allowed_mmm=format(as.Date(sprintf("%04d-%02d-01",year,q_months)),"%b-%y")
+      } else{
+        stop("Provide either month or quarter")
+      }
+      mmm_cols_use=intersect(mmm_cols,allowed_mmm)
+      #Write allowed formulas
+      for(col_name in mmm_cols_use){
+        sheet_name=mmm_to_sheet(col_name)
+        excel_rows=rows+asset_header_row
+        ranges=paste0("'",sheet_name,"'!",excel_letter,excel_rows)
+        formula=paste0("=SUM(",paste(ranges,collapse=","),")")
+        writeFormula(wb,sheet=capex_sheet_name,x=formula,startRow=r+capex_header_row,startCol=capex_col_indices[[col_name]])
+        formula_preview[r,col_name]=formula
+      }
+      #Remaining columns via lookup
+      remaining_cols=setdiff(mmm_cols,mmm_cols_use)
+      capex_keys_norm=normalize_val(unlist(capex_tracking[r,key_cols]))
+      capex_key_str=paste(capex_keys_norm,collapse="|")
+      match_row=result_lookup[[capex_key_str]]
+      if(!is.null(match_row) && length(match_row)==1){
+        for(col_name in remaining_cols){
+          formula_to_write=result[match_row,col_name,drop=TRUE]
+          formula_to_write=sub("^=+","=",formula_to_write)
+          if(!is.na(formula_to_write) && nzchar(formula_to_write)){
+            writeFormula(wb,sheet=capex_sheet_name,x=formula_to_write,startRow=r+capex_header_row,
+                          startCol=capex_col_indices[[col_name]])
+            formula_preview[r,col_name]=formula_to_write
+          }
+        }
+      } else{
+        #Unmatched row → add to preview
+        unmatched_idx=unmatched_idx+1
+        new_row=as.list(rep(NA_character_,ncol(formula_preview)))
+        names(new_row)=names(formula_preview)
+        for(k in key_cols){
+          new_row[[k]]=capex_tracking[r,k]
+        }
+        for(col_name in mmm_cols_use){
+          sheet_name=mmm_to_sheet(col_name)
+          excel_rows=rows+asset_header_row
+          ranges=paste0("'",sheet_name,"'!",excel_letter,excel_rows)
+          formula=paste0("=SUM(",paste(ranges,collapse=","),")")
+          new_row[[col_name]]=formula
+        }
+        unmatched_rows[[unmatched_idx]]=new_row
+      }
+    }
+    #Append unmatched
+    if(length(unmatched_rows)>0){
+      unmatched_df=do.call(rbind,lapply(unmatched_rows,function(x) as.data.frame(x,stringsAsFactors=FALSE)))
+      formula_preview=rbind(formula_preview,unmatched_df)
+    }
+    #Columns to check
+    date_cols=c("Start Date","End Date")
+    for(col_name in date_cols){
+      col_idx=which(names(capex_tracking)==col_name)
+      if(length(col_idx)==1){
+        rows_with_date_text=which(grepl("^\\d{1,2}/\\d{1,2}/\\d{4}$",capex_tracking[[col_name]]))
+        if(length(rows_with_date_text)>0){
+          date_style=createStyle(numFmt="DATE",halign="right")
+          for(r in rows_with_date_text){
+            excel_date=as.Date(capex_tracking[[col_name]][r],"%m/%d/%Y")
+            writeData(wb,sheet="CapEx Tracking",x=excel_date,startCol=col_idx,startRow=capex_header_row+r,colNames=FALSE)
+            addStyle(wb,sheet="CapEx Tracking",style=date_style,rows=capex_header_row+r,cols=col_idx,gridExpand=TRUE,stack=TRUE)
+          }
+        }
+      }
+    }
+    #Identify columns
+    mmm_cols=grep("^[A-Za-z]{3}-[0-9]{2}$",names(capex_tracking),value=TRUE)
+    commit_idx=which(names(capex_tracking)=="CapEx Commitment")
+    commit_letter=int2col(commit_idx)
+    #Define header row and MMM-YY columns
+    commit_idx=which(names(capex_tracking)=="CapEx Commitment")
+    commit_letter=int2col(commit_idx)
+    mmm_cols=grep("^\\w{3}-\\d{2}$",names(capex_tracking),value=TRUE)
+    #Apply header styles only
+    if(length(mmm_cols)>0){
+      #Non-MMM-YY header fill
+      non_mmm_cols=setdiff(1:ncol(capex_tracking),which(names(capex_tracking) %in% mmm_cols))
+      if(length(non_mmm_cols)>0){
+        addStyle(wb,sheet="CapEx Tracking",style=createStyle(fgFill="#F2F2F2",textDecoration="bold"),rows=capex_header_row,
+                  cols=non_mmm_cols,gridExpand=TRUE,stack=TRUE)
+      }
+      #MMM-YY header fill
+      mmm_idx=which(names(capex_tracking) %in% mmm_cols)
+      addStyle(wb,sheet="CapEx Tracking",style=createStyle(fgFill="#DDEBF7",textDecoration="bold"),rows=capex_header_row,
+                cols=mmm_idx,gridExpand=TRUE,stack=TRUE)
+    }
+    message("CapEx Tracking sheet updated.")
+    #Number of rows needed
+    n=nrow(effective_dates_expanded)
+    odometers=data.frame("Odometer Name"=character(n),"Title"=character(n),"Subtitle"=character(n),"Start Value"=numeric(n),
+                          "End Value"=numeric(n),"Current Value"=numeric(n),"Current Status"=character(n),"Status"=character(n),
+                          "Status Color"=character(n),"Note"=character(n),stringsAsFactors=FALSE)
+    names(odometers)=gsub("\\."," ",names(odometers))
+    #Clean Plant Location (remove tokens containing numbers)
+    clean_plant=function(x){
+      x%>%str_split("\\s+")%>%sapply(function(words){
+        words[!grepl("\\d",words)]%>%paste(collapse=" ")
+      })
+    }
+    #Build base "Plant Location, State"
+    base_loc=paste0(clean_plant(effective_dates_expanded$`Plant Location`),", ",effective_dates_expanded$State)
+    #Determine where multiple addresses exist per Plant+State
+    addr_counts=effective_dates_expanded%>%mutate(base_loc=base_loc)%>%group_by(base_loc)%>%
+      summarise(n_addr=n_distinct(Address,na.rm=TRUE),.groups="drop")
+    #Join back to rows
+    effective_with_flags=effective_dates_expanded%>%mutate(base_loc=base_loc)%>%left_join(addr_counts,by="base_loc")
+    #Final Odometer Name
+    odom_names=ifelse(effective_with_flags$n_addr>1 & !is.na(effective_with_flags$Address) & 
+                      effective_with_flags$Address!="",paste0(effective_with_flags$Address,", ",effective_with_flags$base_loc),
+                      effective_with_flags$base_loc)
+    #Ensure same length as effective_dates_expanded
+    length(odom_names)==nrow(effective_dates_expanded)
+    #Assign into odometers (same row count assumed)
+    odometers$`Odometer Name`=odom_names
+    odom_mapping=effective_dates_expanded%>%mutate(base_loc=paste0(clean_plant(`Plant Location`),", ",State),
+                                                    #Count unique addresses within plant+state
+                                                    n_addr=ave(Address,base_loc,FUN=function(x) length(unique(x))),
+                                                    #Build odometer name
+                                                    odom_name=ifelse(n_addr>1 & !is.na(Address) & Address!="",
+                                                                      paste0(Address,", ",base_loc),base_loc))%>%
+                                            select(odom_name,Incentives,`CapEx Commitment`,`Eligible Expenditures`,
+                                                    `Incentive Start Date`,`Incentive End Date`)
+    #Add occurrence id
+    odom_mapping=odom_mapping%>%group_by(odom_name)%>%mutate(match_id=row_number())%>%ungroup()
+    odometers=odometers%>%group_by(`Odometer Name`)%>%mutate(match_id=row_number())%>%ungroup()
+    #Join + Title + Subtitle
+    odometers=odometers%>%left_join(odom_mapping,by=c("Odometer Name"="odom_name","match_id"="match_id"))%>%
+                          mutate(Title=Incentives,
+                                  capex_raw=ifelse(is.na(`CapEx Commitment`)|`CapEx Commitment`==""|`CapEx Commitment`=="NA",
+                                                    NA,`CapEx Commitment`),
+                                  expend_raw=ifelse(is.na(`Eligible Expenditures`)|`Eligible Expenditures`==""|`Eligible Expenditures`=="NA",
+                                                    NA,`Eligible Expenditures`),
+        #Start / End Value columns (literal text, TBD handling)
+        `Incentive Start Date`=ifelse(is.na(`Incentive Start Date`)|`Incentive Start Date`==""|`Incentive Start Date`=="NA",
+                                      "TBD",`Incentive Start Date`),
+        `Incentive End Date`=ifelse(is.na(`Incentive End Date`)|`Incentive End Date`==""|`Incentive End Date`=="NA",
+                                    "TBD",`Incentive End Date`),
+        `Start Value`=0,
+        `End Value`=suppressWarnings(as.numeric(`CapEx Commitment`)),
+        end_txt=`Incentive End Date`,capex_num=suppressWarnings(as.numeric(gsub("[^0-9.]","",capex_raw))),
+        capex_txt=ifelse(is.na(capex_num),"TBD",paste0("$",sprintf("%.1f",capex_num/1e6),"MM")),
+        expend_txt=ifelse(is.na(expend_raw),"TBD",expend_raw),Subtitle=paste(capex_txt,"in",expend_txt,"by",end_txt))%>%
+      select(-Incentives,-match_id,-capex_raw,-expend_raw,-capex_num,-capex_txt,-expend_txt,-`CapEx Commitment`,
+              -`Eligible Expenditures`,-`Incentive Start Date`,-`Incentive End Date`,-end_txt)
+    #Remove existing "Odometers" sheet if present
+    if("Odometers" %in% names(wb)){
+      removeWorksheet(wb,"Odometers")
+    }
+    #Add sheet with yellow tab
+    addWorksheet(wb,sheetName="Odometers",tabColour="#FFFF00")
+    #Write data
+    writeData(wb,"Odometers",odometers)
+    #Freeze top row
+    freezePane(wb,"Odometers",firstRow=TRUE)
+    #Add filters
+    addFilter(wb,"Odometers",row=1,cols=1:ncol(odometers))
+    #Bold text style for headers
+    boldHeaderStyle=createStyle(textDecoration="bold")
+    #Header style for all columns except "Note"
+    headerCols=setdiff(names(odometers),"Note")
+    headerStyle=createStyle(fontColour="white",fgFill="#002060",textDecoration="bold")
+    addStyle(wb,sheet="Odometers",style=headerStyle,rows=1,cols=which(names(odometers) %in% headerCols),
+              gridExpand=TRUE,stack=TRUE)
+    #Header style for "Note" column
+    noteCol=which(names(odometers)=="Note")
+    noteHeaderStyle=createStyle(fgFill="#FFFF00",textDecoration="bold")
+    addStyle(wb,sheet="Odometers",style=noteHeaderStyle,rows=1,cols=noteCol,gridExpand=TRUE,stack=TRUE)
+    #Identify the numeric columns
+    accountingCols=which(names(odometers) %in% c("Start Value","End Value","Current Value"))
+    #Create style with Accounting number format
+    accountingStyle=createStyle(numFmt="ACCOUNTING")
+    #Apply style to all rows (except header) in these columns
+    addStyle(wb,sheet="Odometers",style=accountingStyle,rows=2:(nrow(odometers)+1),cols=accountingCols,
+              gridExpand=TRUE,stack=TRUE)
+    #Prepare odometers with correct comma logic
+    odometers=odometers%>%mutate(comma_count=str_count(`Odometer Name`,","),
+                                  Part1=ifelse(comma_count==2,str_trim(str_split_fixed(`Odometer Name`,",",3)[,1]),
+                                                NA_character_),
+                                  Part2=ifelse(comma_count==2,str_trim(str_split_fixed(`Odometer Name`,",",3)[,2]),
+                                                              str_trim(str_split_fixed(`Odometer Name`,",",2)[,1])),
+                                  Part3=ifelse(comma_count==2,str_trim(str_split_fixed(`Odometer Name`,",",3)[,3]),
+                                                              str_trim(str_split_fixed(`Odometer Name`,",",2)[,2])),
+                                  Eligible_Exp_Extract=str_trim(str_match(Subtitle,"in (.+?) by")[,2]),
+                                  Title=str_trim(Title),`End Value`=as.numeric(`End Value`))%>%select(-comma_count)
+    clean_plant=function(x){
+      sapply(str_split(x,"\\s+"),function(words){
+        paste(words[!grepl("\\d",words)],collapse=" ")
+      })
+    }
+    capex_tracking_norm=capex_tracking%>%mutate(`Facility Address`=str_squish(`Facility Address`),
+                                                #Remove numeric tokens from Plant Location
+                                                `Plant Location`=str_squish(clean_plant(`Plant Location`)),
+                                                State=str_squish(State),Incentive=str_squish(Incentive),
+                                                `Eligible Expenditures`=str_squish(`Eligible Expenditures`),
+                                                `CapEx Commitment`=suppressWarnings(as.numeric(`CapEx Commitment`)))
+    #Most recent MMM-YY column
+    monthly_cols=grep("^[A-Za-z]{3}-[0-9]{2}$",names(capex_tracking_norm),value=TRUE)
+    most_recent_col=tail(monthly_cols,1)
+    most_recent_col_letter=int2col(which(names(capex_tracking_norm)==most_recent_col))
+    #Write formulas
+    current_value_col=which(names(odometers)=="Current Value")
+    for(i in seq_len(nrow(odometers))){
+      match_row=which(capex_tracking_norm$`Plant Location`==odometers$Part2[i] &
+                      capex_tracking_norm$State==odometers$Part3[i] &
+                      capex_tracking_norm$Incentive==odometers$Title[i] &
+                      capex_tracking_norm$`Eligible Expenditures`==odometers$Eligible_Exp_Extract[i] &
+                      capex_tracking_norm$`CapEx Commitment`==odometers$`End Value`[i] &
+                      (is.na(odometers$Part1[i])|capex_tracking_norm$`Facility Address`==odometers$Part1[i]))
+      if(length(match_row)==1){
+        excel_row=match_row+capex_header_row
+        formula=paste0("='CapEx Tracking'!",most_recent_col_letter,excel_row)
+        writeFormula(wb,sheet="Odometers",x=formula,startCol=current_value_col,startRow=i+1)
+      } else{
+        writeData(wb,sheet="Odometers",x="",startCol=current_value_col,startRow=i+1)
+      }
+    }
+    #Remove helper columns from odometers
+    odometers=odometers%>%select(-Part1,-Part2,-Part3,-Eligible_Exp_Extract)
+    #Save workbook
+    saveWorkbook(wb,file_path,overwrite=TRUE)
+    automate_excel_save(file_path)
+    #Assuming you have the workbook saved at file_path and the sheet name in variable sheet_name
+    odometer_frame=readxl::read_excel(file_path,sheet="Odometers")
+    #Month Name → Number
+    month_lookup=setNames(1:12,month.name)
+    if(!is.na(month)){
+      month_num=month_lookup[[month]]
+    }
+    #Compute As-Of Date
+    if(!is.na(month)){
+      as_of_date=ceiling_date(as.Date(paste0(year,"-",month_num,"-01")),"month")-days(1)
+    } else if(!is.na(quarter)){
+      quarter_end_month=c(3,6,9,12)[quarter]
+      as_of_date=ceiling_date(as.Date(paste0(year,"-",quarter_end_month,"-01")),"month")-days(1)
+    }
+    #No leading zero month
+    as_of_txt=paste0(month(as_of_date),"/",format(as_of_date,"%d/%y"))
+    #Format Value Function
+    format_capex_short=function(x){
+      x_num=suppressWarnings(as.numeric(x))
+      ifelse(is.na(x_num),NA_character_,ifelse(x_num>=1e6,paste0("$",sprintf("%.2f",x_num/1e6),"MM"),
+        ifelse(x_num>=1e5,paste0("$",round(x_num/1e3),"K"),paste0("$",format(round(x_num,0),big.mark=",")))))
+    }
+    #Build Current Status
+    odometer_frame=odometer_frame%>%mutate(curr_val_num=suppressWarnings(as.numeric(`Current Value`)),
+                                            end_val_num=suppressWarnings(as.numeric(`End Value`)),
+                                            capex_txt=format_capex_short(curr_val_num),
+                                            completion_txt=ifelse(!is.na(curr_val_num) & !is.na(end_val_num) & curr_val_num>end_val_num,
+                                                                  " Completed",""),
+                                            `Current Status`=ifelse(is.na(capex_txt),"", #Blank if TBD
+                                                              paste0(capex_txt," CapEx",completion_txt," as of ",as_of_txt)))%>%
+                                            select(-curr_val_num,-end_val_num,-capex_txt,-completion_txt)
+    odometer_frame=odometer_frame%>%mutate(Status=ifelse(grepl("Completed",`Current Status`),"Complete",
+                                                  ifelse(`Current Status`==""|is.na(`Current Status`),"Not Started",
+                                                          "On Track")))
+    #Columns to write
+    cols_to_write=c("Current Status","Status")
+    data_to_write=odometer_frame[,cols_to_write]
+    #Get column numbers in the Excel sheet
+    #Replace these with the actual column numbers for "Current Status" and "Status" in your sheet
+    current_status_col=which(names(odometers)=="Current Status")
+    status_col=which(names(odometers)=="Status")
+    #Start row in Excel (assuming row 1 is header)
+    start_row=2 #If your headers are in row 1
+    #Write "Current Status"
+    writeData(wb,sheet="Odometers",x=data_to_write[["Current Status"]],startCol=current_status_col,
+              startRow=start_row,colNames=FALSE)
+    #Write "Status"
+    writeData(wb,sheet="Odometers",x=data_to_write[["Status"]],startCol=status_col,startRow=start_row,colNames=FALSE)
+    #Column number for "Status"
+    status_col=which(names(odometers)=="Status")
+    end_row=start_row+nrow(odometer_frame)-1
+    #Create a style for completed status
+    complete_style=createStyle(fontColour="#00B050",textDecoration="bold")
+    #Apply conditional formatting
+    conditionalFormatting(wb,sheet="Odometers",cols=status_col,rows=start_row:end_row,rule='=="Complete"',
+                          style=complete_style)
+    #Column numbers
+    status_color_col=which(names(odometers)=="Status Color") #Status Color column
+    #Write the IFS formulas for Status Color
+    for(i in seq_len(nrow(odometer_frame))){
+      excel_row=start_row+i-1
+      status_cell=paste0(int2col(which(names(odometers)=="Status")),excel_row) #e.g., "H2"
+      formula=paste0("=_xlfn.IFS(",status_cell,"=\"Complete\",\"Green\",",status_cell,"=\"Not Started\",\"Black\",",
+                                  status_cell,"=\"On Track\",\"Blue\",",status_cell,"=\"At Risk\",\"Red\"",")")
+      writeFormula(wb,sheet="Odometers",x=formula,startCol=status_color_col,startRow=excel_row)
+    }
+    #Conditional formatting based on Status Color text
+    conditionalFormatting(wb,sheet="Odometers",cols=status_color_col,rows=start_row:end_row,rule='="Blue"',
+                          style=createStyle(bgFill="#9BC2E6"))
+    conditionalFormatting(wb,sheet="Odometers",cols=status_color_col,rows=start_row:end_row,rule='="Green"',
+                          style=createStyle(bgFill="#C6E0B4"))
+    conditionalFormatting(wb,sheet="Odometers",cols=status_color_col,rows=start_row:end_row,rule='="Black"',
+                          style=createStyle(bgFill="#808080"))
+    #Auto-fit column widths
+    setColWidths(wb,"Odometers",cols=1:ncol(odometers),widths="auto")
+    message("Odometers sheet updated.")
+    #Helper: extract year/type/period info from sheet names
+    extract_sheet_info=function(name){
+      info=list(year=NA,type="other",period=NA)
+      if(grepl("^Q[1-4]\\.[0-9]{4}$",name)){
+        parts=unlist(strsplit(name,"\\."))
+        info$type="quarterly"
+        info$year=as.integer(parts[2])
+        info$period=as.integer(sub("Q","",parts[1]))*3 #Q1=3, Q2=6, etc.
+      } else if(grepl("^(0[1-9]|1[0-2])\\.[0-9]{4}$",name)){
+        parts=unlist(strsplit(name,"\\."))
+        info$type="monthly"
+        info$year=as.integer(parts[2])
+        info$period=as.integer(parts[1])
+      } else{
+        info$year=1900
+        info$period=0
+      }
+      return(info)
+    }
+    existing_sheets=names(wb)
+    #Priority sheets
+    priority=c("Combined Asset Data")
+    priority_present=intersect(priority,existing_sheets)
+    remaining=setdiff(existing_sheets,priority_present)
+    #Updated parsing function for sheet info
+    extract_sheet_info=function(sheet){
+      sheet=str_trim(sheet)
+      year=NA_integer_
+      type="other"
+      period=NA_integer_
+      #MM.YYYY
+      if(str_detect(sheet,"^\\d{1,2}\\.\\d{4}$")){
+        parts=str_split(sheet,"\\.",simplify=TRUE)
+        month=as.integer(parts[1])
+        year=as.integer(parts[2])
+        if(!is.na(month) && month>=1 && month<=12){
+          type="monthly"
+          period=month
+          return(list(year=year,type=type,period=period))
+        }
+      }
+      #QX.YYYY
+      if(str_detect(sheet,"^Q[1-4]\\.\\d{4}$")){
+        parts=str_split(sheet,"\\.",simplify=TRUE)
+        quarter=as.integer(str_remove(parts[1],"Q"))
+        year=as.integer(parts[2])
+        type="quarterly"
+        period=quarter*3
+        return(list(year=year,type=type,period=period))
+      }
+      #If any year found inside sheet name, treat as yearly with period 0
+      if(str_detect(sheet,"\\d{4}")){
+        year_match=str_extract(sheet,"\\d{4}")
+        year=as.integer(year_match)
+        type="yearly"
+        period=0
+        return(list(year=year,type=type,period=period))
+      }
+      #Fallback: unknown type
+      list(year=NA_integer_,type="other",period=NA_integer_)
+    }
+    #Extract info from remaining sheets
+    sheet_info=lapply(remaining,extract_sheet_info)
+    sheet_df=data.frame(name=remaining,year=sapply(sheet_info,`[[`,"year"),type=sapply(sheet_info,`[[`,"type"),
+                        period=sapply(sheet_info,`[[`,"period"),stringsAsFactors=FALSE)
+    #Define type order: yearly > quarterly > monthly > other
+    type_levels=c("yearly","quarterly","monthly","other")
+    sheet_df$type=factor(sheet_df$type,levels=type_levels)
+    #Sort by year descending, then type, then period descending (months/quarters mixed)
+    remaining_sorted=sheet_df%>%arrange(year,type,period)%>%pull(name) #Ascending year and period
+    #Final ordered list
+    ordered=c(priority_present,remaining_sorted)
+    #Keep only existing sheets
+    ordered=ordered[ordered %in% existing_sheets]
+    #Map to workbook indices
+    idx=match(ordered,existing_sheets)
+    idx=idx[!is.na(idx)] #Remove any NA
+    #Reorder workbook sheets
+    worksheetOrder(wb)=idx
+    wb$ActiveSheet=1L
+    #Save workbook
+    saveWorkbook(wb,file_path,overwrite=TRUE)
+    cat("Workbook sheet order updated:\n",paste(ordered,collapse=", "),"\n")
+    end_time_1=Sys.time()
+    time_elapsed_1=as.numeric(difftime(end_time_1,start_time_1,units="secs"))
+    format_elapsed=function(elapsed){
+      elapsed=as.numeric(elapsed,units="secs") #convert to numeric seconds
+      hrs=floor(elapsed/3600)
+      mins=floor((elapsed %% 3600)/60)
+      secs=round(elapsed %% 60,2)
+      parts=c()
+      if(hrs>0){
+        parts=c(parts,sprintf("%d %s",hrs,ifelse(hrs==1,"hour","hours")))
+      }
+      if(mins>0){
+        parts=c(parts,sprintf("%d %s",mins,ifelse(mins==1,"minute","minutes")))
+      }
+      #Always show seconds
+      parts=c(parts,sprintf("%.2f %s",secs,ifelse(secs==1,"second","seconds")))
+      paste(parts,collapse=" ")
+    }
+    #Build report label
+    if(!is.null(month)){
+      report_type="monthly"
+      month_upper=paste0(toupper(substr(month,1,1)),tolower(substr(month,2,nchar(month))))
+      report_label=paste0(month_upper," ",year)
+    } else if(!is.null(quarter)){
+      report_type="quarterly"
+      report_label=paste0("Q",quarter," ",year)
+    } else{
+      report_type="unspecified"
+      report_label=year
+    }
+    #Using paste0 to avoid extra spaces
+    cat(paste0("It took ",format_elapsed(time_elapsed_1)," to complete the ",report_type," report for ",report_label,".\n"))
+  }
+  #Run reports
+  if(!is.null(start_month) && !is.null(end_month)){
+    #Convert month names to numbers
+    start_month_num=match(tolower(start_month),tolower(month.name))
+    end_month_num=match(tolower(end_month),tolower(month.name))
+    #Generate continuous sequence of months
+    all_months=seq(from=(start_year-1)*12+start_month_num,to=(end_year-1)*12+end_month_num)
+    #Convert back to months and years
+    months=month.name[((all_months-1) %% 12)+1]
+    years=((all_months-1) %/% 12)+1
+    #Build periods data frame
+    periods=data.frame(Month=months,Year=years)
+    #Run the model
+    for(i in seq_len(nrow(periods))){
+      report_function(company=company,month=periods$Month[i],quarter=NULL,year=periods$Year[i])
+    }
+  } else if(!is.null(start_quarter) && !is.null(end_quarter)){
+    #Generate continuous sequence of quarters
+    all_quarters=seq(from=(start_year-1)*4+start_quarter,to=(end_year-1)*4+end_quarter)
+    #Convert back to quarters and years
+    quarters=((all_quarters-1) %% 4)+1
+    years=((all_quarters-1) %/% 4)+1
+    #Build periods data frame
+    periods=data.frame(Quarter=quarters,Year=years)
+    #Run the model
+    for(i in seq_len(nrow(periods))){
+      report_function(company=company,month=NULL,quarter=periods$Quarter[i],year=periods$Year[i])
+    }
+  } else{
+    stop("You must provide either start/end months or start/end quarters.")
+  }
+}
+```
+
+```{r}
+data_frames=asset_tracking_model(company="demo",
+                                  start_month="March",
+                                  end_month="March",
+                                  start_quarter=NULL,
+                                  end_quarter=NULL,
+                                  start_year=2026,
+                                  end_year=2026)
+```
+
+```{r}
+```
